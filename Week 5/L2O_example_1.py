@@ -141,6 +141,9 @@ for epoch in range(num_epochs):
     if epoch % 20 == 0 or epoch == num_epochs - 1:
         print(f"Epoch {epoch}, Loss: {loss:.4f}")
 
+
+
+i = 50
 # Visualize final solution for the first sample
-final_x = l2o.forward(xi_batch[0])
-visualize_2d_solution(final_x, q_batch[0], a_batch[0], b_batch[0])
+final_x = l2o.forward(xi_batch[i])
+visualize_2d_solution(final_x, q_batch[i], a_batch[i], b_batch[i])
