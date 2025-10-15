@@ -101,7 +101,7 @@ class PendulumODE(nn.Module):
 
     def forward(self, x0, t):
         # Integrate using RK4
-        return rk4_integrate(lambda x: self.f(x), x0, t)  # [N,M,2]
+        return rk4_integrate(self.f, x0, t)  # [N,M,2]
 
 model = PendulumODE().to(device)
 
