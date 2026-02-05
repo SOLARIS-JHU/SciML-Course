@@ -9,6 +9,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
+# Set device to CUDA if available
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Using device: {device}")
+
 # --- 1. Data: Collocation, Initial, and Boundary Points ---
 # Define physical parameters and domain
 alpha = 0.01  # Thermal diffusivity
@@ -25,24 +29,24 @@ def u_initial(x):
 num_collocation = 5000
 x_collocation = torch.rand(num_collocation, 1) * (x_max - x_min) + x_min
 t_collocation = torch.rand(num_collocation, 1) * (t_max - t_min) + t_min
-collocation_points = torch.cat([x_collocation, t_collocation], dim=1)
+collocation_points = torch.cat([x_collocation, t_collocation], dim=1).to(device)
 collocation_points.requires_grad = True
 
 # Generate initial condition points (IC)
 num_ic = 100
 x_ic = torch.rand(num_ic, 1) * (x_max - x_min) + x_min
 t_ic = torch.zeros(num_ic, 1)
-ic_points = torch.cat([x_ic, t_ic], dim=1)
-u_ic = torch.tensor(u_initial(x_ic.detach().numpy()), dtype=torch.float32)
+ic_points = torch.cat([x_ic, t_ic], dim=1).to(device)
+u_ic = torch.tensor(u_initial(x_ic.detach().numpy()), dtype=torch.float32).to(device)
 
 # Generate boundary condition points (BC)
 num_bc = 100
 t_bc = torch.rand(num_bc, 1) * (t_max - t_min) + t_min
 x_bc_left = torch.zeros(num_bc, 1)
 x_bc_right = torch.ones(num_bc, 1)
-bc_points_left = torch.cat([x_bc_left, t_bc], dim=1)
-bc_points_right = torch.cat([x_bc_right, t_bc], dim=1)
-u_bc = torch.zeros(2 * num_bc, 1)
+bc_points_left = torch.cat([x_bc_left, t_bc], dim=1).to(device)
+bc_points_right = torch.cat([x_bc_right, t_bc], dim=1).to(device)
+u_bc = torch.zeros(2 * num_bc, 1).to(device)
 
 
 # --- 2. Machine Learning Model: Neural Network ---
@@ -66,7 +70,7 @@ class PINN(nn.Module):
         return self.net(inputs)
 
 
-pinn = PINN()
+pinn = PINN().to(device)
 
 
 # --- 3. Domain Layer: The 1D Heat Equation PDE ---
@@ -134,11 +138,11 @@ n_points = 100
 x_plot = np.linspace(x_min, x_max, n_points)
 t_plot = np.linspace(t_min, t_max, n_points)
 X_plot, T_plot = np.meshgrid(x_plot, t_plot)
-x_plot_flat = torch.tensor(X_plot.flatten(), dtype=torch.float32).view(-1, 1)
-t_plot_flat = torch.tensor(T_plot.flatten(), dtype=torch.float32).view(-1, 1)
+x_plot_flat = torch.tensor(X_plot.flatten(), dtype=torch.float32).view(-1, 1).to(device)
+t_plot_flat = torch.tensor(T_plot.flatten(), dtype=torch.float32).view(-1, 1).to(device)
 
 with torch.no_grad():
-    u_pred = pinn(x_plot_flat, t_plot_flat).detach().numpy().reshape(n_points, n_points)
+    u_pred = pinn(x_plot_flat, t_plot_flat).detach().cpu().numpy().reshape(n_points, n_points)
 
 # 1. 3D Plot of PINN Solution
 fig = plt.figure(figsize=(12, 8))
@@ -164,8 +168,8 @@ try:
     t_slice = 0.5  # Choose a time to compare
     x_slice = np.linspace(x_min, x_max, n_points)
     u_analytical_slice = u_analytical(x_slice, t_slice, alpha)
-    u_pinn_slice = pinn(torch.tensor(x_slice, dtype=torch.float32).view(-1, 1),
-                        torch.full((n_points, 1), t_slice, dtype=torch.float32)).detach().numpy()
+    u_pinn_slice = pinn(torch.tensor(x_slice, dtype=torch.float32).view(-1, 1).to(device),
+                        torch.full((n_points, 1), t_slice, dtype=torch.float32).to(device)).detach().cpu().numpy()
 
     plt.figure(figsize=(10, 6))
     plt.plot(x_slice, u_analytical_slice, label='Analytical Solution', color='blue', linestyle='--')

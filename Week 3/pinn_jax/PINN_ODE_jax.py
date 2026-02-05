@@ -1,13 +1,15 @@
 """
-Vanilla PINN Example 4.1.1 (Damped Pendulum ODE).
+Vanilla PINN Example 4.1.1 (Damped Pendulum ODE) - JAX Implementation.
 
 Example inspired by
 https://benmoseley.blog/my-research/so-what-is-a-physics-informed-neural-network/
 https://www.mathworks.com/discovery/physics-informed-neural-networks.html
 """
 
-import torch
-import torch.nn as nn
+import jax
+import jax.numpy as jnp
+import equinox as eqx
+import optax
 import numpy as np
 import matplotlib.pyplot as plt
 import imageio
@@ -29,72 +31,70 @@ v0 = 0.0  # Initial angular velocity
 # Time domain
 t_min, t_max = 0.0, 10.0
 num_collocation_points = 500
-collocation_points = torch.linspace(t_min, t_max, num_collocation_points, requires_grad=True).view(-1, 1)
+collocation_points = jnp.linspace(t_min, t_max, num_collocation_points).reshape(-1, 1)
 
 # Initial condition points for loss calculation
-t_ic = torch.tensor(0.0, requires_grad=True).view(-1, 1)
-u_ic = torch.tensor(u0).view(-1, 1)
-v_ic = torch.tensor(v0).view(-1, 1)
+t_ic = jnp.array([[0.0]])
+u_ic = jnp.array([[u0]])
+v_ic = jnp.array([[v0]])
 
 
 # --- 2. Machine Learning Model: Neural Network ---
 # This network will approximate the solution u(t).
 
-class PINN(nn.Module):
-    def __init__(self):
-        super(PINN, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(1, 32),
-            nn.Tanh(),
-            nn.Linear(32, 32),
-            nn.Tanh(),
-            nn.Linear(32, 1)
-        )
+class PINN(eqx.Module):
+    layers: list
 
-    def forward(self, t):
-        return self.net(t)
+    def __init__(self, key):
+        keys = jax.random.split(key, 3)
+        self.layers = [
+            eqx.nn.Linear(1, 32, key=keys[0]),
+            eqx.nn.Linear(32, 32, key=keys[1]),
+            eqx.nn.Linear(32, 1, key=keys[2]),
+        ]
+
+    def __call__(self, t):
+        x = jax.nn.tanh(self.layers[0](t))
+        x = jax.nn.tanh(self.layers[1](x))
+        return self.layers[2](x)
 
 
-pinn = PINN()
+# Initialize model
+key = jax.random.PRNGKey(0)
+pinn = PINN(key)
 
 
 # --- 3. Domain Layer: The Damped Pendulum ODE ---
 # This function calculates the residual of the ODE.
-# It uses PyTorch's autograd to compute derivatives.
+# It uses JAX's autograd to compute derivatives.
 
-def physics_residual(pinn_model, t):
-    # Get the predicted solution u(t) from the network
-    u = pinn_model(t)
+def physics_residual(model, t_val):
+    """Compute ODE residual for a single time point."""
+    def u_fn(t):
+        return model(jnp.array([[t]]))[0, 0]
 
-    # Compute the first derivative (angular velocity)
-    u_t = torch.autograd.grad(
-        u, t,
-        grad_outputs=torch.ones_like(u),
-        create_graph=True,
-        retain_graph=True
-    )[0]
-
-    # Compute the second derivative (angular acceleration)
-    u_tt = torch.autograd.grad(
-        u_t, t,
-        grad_outputs=torch.ones_like(u_t),
-        create_graph=True,
-        retain_graph=True
-    )[0]
+    u = u_fn(t_val)
+    u_t = jax.grad(u_fn)(t_val)
+    u_tt = jax.grad(jax.grad(u_fn))(t_val)
 
     # Define the ODE residual (should be close to zero)
     # d^2u/dt^2 + beta * du/dt + (g/l) * sin(u) = 0
-    ode_residual = u_tt + beta * u_t + (g / l) * torch.sin(u)
+    ode_residual = u_tt + beta * u_t + (g / l) * jnp.sin(u)
 
     return ode_residual
+
+
+def physics_residual_batch(model, t_batch):
+    """Vectorized physics residual for batch of time points."""
+    return jax.vmap(lambda t: physics_residual(model, t[0]))(t_batch)
 
 
 # --- 4. GIF visualisation functions ---
 
 # Create a list to store plot images for the GIF
 gif_frames = []
-t_test = torch.linspace(t_min, t_max, 500).view(-1, 1)
-collocation_points_np = collocation_points.detach().numpy()
+t_test = jnp.linspace(t_min, t_max, 500).reshape(-1, 1)
+collocation_points_np = np.array(collocation_points)
 
 # A reference numerical solution for comparison
 try:
@@ -121,16 +121,17 @@ except ImportError:
 
 
 # plotting function for gif
-def save_frame(epoch):
+def save_frame(epoch, model):
     """Saves a plot frame for the GIF."""
     plt.figure(figsize=(10, 6))
 
     # Plotting the current PINN prediction
-    plt.plot(t_test.detach().numpy(), pinn(t_test).detach().numpy(),
+    u_pred = jax.vmap(lambda t: model(t)[0])(t_test)
+    plt.plot(np.array(t_test), np.array(u_pred),
              label='PINN Prediction', color='red', linewidth=2)
 
     # Plotting the collocation points
-    plt.scatter(collocation_points_np, torch.zeros(collocation_points_np.shape).numpy(),
+    plt.scatter(collocation_points_np, np.zeros(collocation_points_np.shape),
                 s=10, label='Collocation Points', color='orange', alpha=0.5)
 
     # Plotting the numerical solution if available
@@ -160,57 +161,71 @@ def save_frame(epoch):
 # --- 5. Physics-Informed Loss Functions, Training and Results ---
 # We combine the initial condition loss and the physics loss.
 
-loss_function = nn.MSELoss()
-optimizer = torch.optim.Adam(pinn.parameters(), lr=1e-3)
+def loss_fn(model, collocation_pts, t_ic_val, u_ic_val, v_ic_val):
+    """Compute total loss."""
+    # Calculate the physics loss
+    ode_residuals = physics_residual_batch(model, collocation_pts)
+    physics_loss = jnp.mean(ode_residuals ** 2)
+
+    # Calculate the initial condition loss
+    u_pred_ic = model(t_ic_val)[0, 0]
+
+    def u_fn_ic(t):
+        return model(jnp.array([[t]]))[0, 0]
+
+    u_t_pred_ic = jax.grad(u_fn_ic)(t_ic_val[0, 0])
+
+    ic_loss_pos = (u_pred_ic - u_ic_val[0, 0]) ** 2
+    ic_loss_vel = (u_t_pred_ic - v_ic_val[0, 0]) ** 2
+    ic_loss = ic_loss_pos + ic_loss_vel
+
+    # Total loss is a combination of both
+    total_loss = physics_loss + ic_loss
+
+    return total_loss, (physics_loss, ic_loss)
+
+
+@eqx.filter_jit
+def train_step(model, opt_state, collocation_pts, t_ic_val, u_ic_val, v_ic_val):
+    """Single training step."""
+    (loss, (phys_loss, ic_loss_val)), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(
+        model, collocation_pts, t_ic_val, u_ic_val, v_ic_val
+    )
+    updates, opt_state = optimizer.update(grads, opt_state, model)
+    model = eqx.apply_updates(model, updates)
+    return model, opt_state, loss, phys_loss, ic_loss_val
+
+
+# Setup optimizer
+optimizer = optax.adam(1e-3)
+opt_state = optimizer.init(eqx.filter(pinn, eqx.is_array))
 
 epochs = 30000
 
 print(f"Training started for {epochs} epochs...")
 
 for epoch in range(epochs):
-    optimizer.zero_grad()
-
-    # Calculate the physics loss
-    ode_residual = physics_residual(pinn, collocation_points)
-    physics_loss = loss_function(ode_residual, torch.zeros_like(ode_residual))
-
-    # Calculate the initial condition loss
-    u_pred_ic = pinn(t_ic)
-    u_t_pred_ic = torch.autograd.grad(
-        u_pred_ic, t_ic,
-        grad_outputs=torch.ones_like(u_pred_ic),
-        create_graph=True,
-        retain_graph=True
-    )[0]
-
-    ic_loss_pos = loss_function(u_pred_ic, u_ic)
-    ic_loss_vel = loss_function(u_t_pred_ic, v_ic)
-    ic_loss = ic_loss_pos + ic_loss_vel
-
-    # Total loss is a combination of both
-    total_loss = physics_loss + ic_loss
-
-    # Backward pass and optimization
-    total_loss.backward()
-    optimizer.step()
+    pinn, opt_state, total_loss, physics_loss, ic_loss = train_step(
+        pinn, opt_state, collocation_points, t_ic, u_ic, v_ic
+    )
 
     if (epoch + 1) % 100 == 0:
-        print(f'Epoch [{epoch + 1}/{epochs}], Loss: {total_loss.item():.6f}, '
-              f'Physics Loss: {physics_loss.item():.6f}, IC Loss: {ic_loss.item():.6f}')
+        print(f'Epoch [{epoch + 1}/{epochs}], Loss: {total_loss:.6f}, '
+              f'Physics Loss: {physics_loss:.6f}, IC Loss: {ic_loss:.6f}')
         # Save a frame for the GIF every 100 epochs
-        with torch.no_grad():
-            save_frame(epoch + 1)
+        save_frame(epoch + 1, pinn)
 
 print("Training finished!")
 
 # --- Visualize Final Results and Generate GIF ---
 # Final plot with collocation points
-with torch.no_grad():
-    u_pred_final = pinn(t_test)
+u_pred_final = jax.vmap(lambda t: pinn(t)[0])(t_test)
 
 plt.figure(figsize=(10, 6))
-plt.plot(t_test.detach().numpy(), u_pred_final.detach().numpy(), label='PINN Prediction', color='red', linewidth=2)
-plt.scatter(collocation_points_np, pinn(collocation_points).detach().numpy(), s=10, label='Collocation Points',
+plt.plot(np.array(t_test), np.array(u_pred_final), label='PINN Prediction', color='red', linewidth=2)
+
+u_collocation = jax.vmap(lambda t: pinn(t)[0])(collocation_points)
+plt.scatter(collocation_points_np, np.array(u_collocation), s=10, label='Collocation Points',
             color='red', alpha=0.5)
 
 if u_ref is not None:
