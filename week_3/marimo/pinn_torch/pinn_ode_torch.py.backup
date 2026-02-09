@@ -1,0 +1,935 @@
+# /// script
+# [tool.marimo.runtime]
+# auto_instantiate = false
+# on_cell_change = "lazy"
+# ///
+
+import marimo
+
+__generated_with = "0.19.7"
+app = marimo.App(app_title="PINN ODE (Torch)")
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # Physics-Informed Neural Networks for ODEs
+    ## Solving the Damped Pendulum Without Discretization
+
+    **Physics-Informed Neural Networks (PINNs)** represent a paradigm shift in computational physics:
+    instead of discretizing differential equations numerically, we train neural networks to satisfy
+    both the governing equations and boundary/initial conditions simultaneously.
+
+    ### Why PINNs Matter
+
+    | Traditional Methods | PINNs |
+    |-------------------|-------|
+    | Require spatial/temporal discretization | **Meshfree**: continuous solution representation |
+    | Fixed grid resolution | **Adaptive**: query solution at any point |
+    | Black-box outputs | **Differentiable**: embed in optimization pipelines |
+    | Equation-specific solvers | **Flexible**: handle complex geometries & inverse problems |
+    | Ignore sparse measurements | **Data-efficient**: fuse physics with observations |
+
+    This demonstration solves the **nonlinear damped pendulum** using only automatic differentiation
+    and gradient descent—no finite differences, no time-stepping schemes.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ---
+    ## 1. The Physical System
+
+    The damped pendulum exhibits rich nonlinear dynamics governed by:
+
+    $$\frac{d^2\theta}{dt^2} + \beta \frac{d\theta}{dt} + \frac{g}{l}\sin(\theta) = 0$$
+
+    **Notation:**
+    - $\theta(t)$: angular displacement from vertical equilibrium (rad)
+    - $\beta$: damping coefficient (dimensionless)
+    - $g$: gravitational acceleration (9.81 m/s²)
+    - $l$: pendulum length (m)
+
+    **Initial Conditions:** $\theta(0) = \theta_0$, $\dot{\theta}(0) = \omega_0$
+
+    ### Dynamical Regimes
+
+    The system's behavior depends on damping strength relative to the critical value $\beta_c = 2\sqrt{g/l}$:
+
+    - **Underdamped** ($\beta < \beta_c$): Oscillations with exponentially decaying amplitude
+    - **Critically damped** ($\beta = \beta_c$): Fastest return to equilibrium without overshooting
+    - **Overdamped** ($\beta > \beta_c$): Slow exponential decay without oscillation
+
+    **Nonlinearity:** The $\sin(\theta)$ term makes this equation **analytically intractable** for large amplitudes—
+    a perfect testbed for data-driven methods.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    import base64
+    import io
+
+    import imageio
+    import marimo as mo
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import torch
+    import torch.nn as nn
+    from PIL import Image
+
+    try:
+        from scipy.integrate import solve_ivp
+    except ImportError:
+        solve_ivp = None
+
+    try:
+        import matplotlib.animation as animation
+        from IPython.display import HTML
+    except ImportError:
+        animation = None
+        HTML = None
+    return Image, animation, base64, imageio, io, mo, nn, np, plt, solve_ivp, torch
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ---
+    ## 2. The PINN Formulation
+
+    ### Core Idea: Multi-Objective Loss Function
+
+    A PINN approximates $\theta(t)$ with a neural network $u_\phi(t; \phi)$ by minimizing:
+
+    $$\boxed{\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{physics}} + \mathcal{L}_{\text{IC}}}$$
+
+    **The key innovation:** derivatives are computed via **automatic differentiation** (backpropagation),
+    allowing us to directly evaluate the ODE residual without numerical approximations.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Loss Component 1: Physics Constraint
+
+    At **collocation points** $\{t_i\}_{i=1}^N$ randomly sampled from $[0, T]$:
+
+    $$\mathcal{L}_{\text{physics}} = \frac{1}{N}\sum_{i=1}^N \left[\underbrace{\frac{\partial^2 u_\phi}{\partial t^2}(t_i) + \beta \frac{\partial u_\phi}{\partial t}(t_i) + \frac{g}{l}\sin(u_\phi(t_i))}_{\text{ODE residual (should be } \approx 0 \text{)}} \right]^2$$
+
+    **Intuition:** The network learns to satisfy the governing equation everywhere in the domain.
+
+    ### Loss Component 2: Initial Conditions
+
+    At $t=0$, enforce the known initial state:
+
+    $$\mathcal{L}_{\text{IC}} = \underbrace{\left|u_\phi(0) - \theta_0\right|^2}_{\text{position match}} + \underbrace{\left|\frac{\partial u_\phi}{\partial t}(0) - \omega_0\right|^2}_{\text{velocity match}}$$
+
+    **Crucial detail:** Without $\mathcal{L}_{\text{IC}}$, the ODE has infinitely many solutions—initial conditions
+    provide the "anchor" that selects the physically correct trajectory.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ---
+    ## 3. Implementation: Core Components
+
+    Below are the key architectural choices and PINN-specific functions. Expand each section to see the code.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Neural Network Architecture
+
+    **Design rationale:**
+    - **Shallow network** (2 hidden layers × 32 neurons): Sufficient for smooth 1D time series
+    - **Tanh activations**: Produce smooth, bounded outputs ideal for oscillatory solutions
+    - **Single input/output**: Maps time $t \to$ angle $\theta(t)$
+
+    The architecture is deliberately minimal—PINNs derive power from physics constraints, not network depth.
+    """)
+    return
+
+
+@app.cell
+def _(mo, nn, np, solve_ivp, torch):
+    class PINN(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(1, 32),
+                nn.Tanh(),
+                nn.Linear(32, 32),
+                nn.Tanh(),
+                nn.Linear(32, 1),
+            )
+
+        def forward(self, t):
+            return self.net(t)
+
+    def physics_residual(pinn_model, t, g, l, beta):
+        u = pinn_model(t)
+        u_t = torch.autograd.grad(
+            u,
+            t,
+            grad_outputs=torch.ones_like(u),
+            create_graph=True,
+            retain_graph=True,
+        )[0]
+        u_tt = torch.autograd.grad(
+            u_t,
+            t,
+            grad_outputs=torch.ones_like(u_t),
+            create_graph=True,
+            retain_graph=True,
+        )[0]
+        return u_tt + beta * u_t + (g / l) * torch.sin(u)
+
+    @mo.cache
+    def collocation_grid(t_min, t_max, num_points, device_type):
+        device = torch.device(device_type)
+        t = torch.linspace(t_min, t_max, num_points, device=device).view(-1, 1)
+        t.requires_grad_(True)
+        return t
+
+    @mo.cache
+    def reference_solution(t_min, t_max, u0, v0, beta, g, l, n_eval):
+        if solve_ivp is None:
+            return None, None
+
+        def damped_pendulum_ode(_t, y, beta, g, l):
+            theta, omega = y
+            return [omega, -beta * omega - (g / l) * np.sin(theta)]
+
+        sol = solve_ivp(
+            damped_pendulum_ode,
+            (t_min, t_max),
+            [u0, v0],
+            args=(beta, g, l),
+            dense_output=True,
+        )
+        t_ref = np.linspace(t_min, t_max, n_eval)
+        u_ref = sol.sol(t_ref)[0]
+        return t_ref, u_ref
+    return PINN, collocation_grid, physics_residual, reference_solution
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Physics Residual Computation
+
+    **Critical implementation detail:** Computing $\frac{\partial^2 u}{\partial t^2}$ requires **higher-order autodiff**.
+
+    ```python
+    # First derivative: ∂u/∂t
+    u_t = torch.autograd.grad(u, t, create_graph=True)[0]
+
+    # Second derivative: ∂²u/∂t²
+    u_tt = torch.autograd.grad(u_t, t, create_graph=True)[0]
+
+    # ODE residual
+    residual = u_tt + beta * u_t + (g/l) * sin(u)
+    ```
+
+    **Why `create_graph=True`?** Enables backpropagation through the derivative computation itself—
+    essential for training the network to minimize the residual.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Training Loop Structure
+
+    The PINN training loop differs from standard supervised learning:
+
+    1. **Sample collocation points** (can resample each epoch for better coverage)
+    2. **Compute physics loss** at collocation points
+    3. **Compute IC loss** at $t=0$
+    4. **Backpropagate combined loss** to update network weights
+
+    **No labeled data required**—the ODE itself provides supervision.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(
+    Image,
+    PINN,
+    collocation_grid,
+    io,
+    mo,
+    nn,
+    np,
+    physics_residual,
+    plt,
+    reference_solution,
+    torch,
+):
+    @mo.persistent_cache
+    def train_model(
+        t_min,
+        t_max,
+        u0,
+        v0,
+        g,
+        l,
+        beta,
+        num_collocation_points,
+        epochs,
+        lr,
+        print_every,
+        frame_every,
+        make_gif,
+        device_type,
+    ):
+        device = torch.device(device_type)
+        pinn = PINN().to(device)
+        loss_fn = nn.MSELoss()
+        optimizer = torch.optim.Adam(pinn.parameters(), lr=lr)
+
+        collocation_points = collocation_grid(
+            t_min,
+            t_max,
+            num_collocation_points,
+            device_type,
+        ).clone().detach().requires_grad_(True)
+
+        t_ic = torch.tensor([[0.0]], dtype=torch.float32, device=device, requires_grad=True)
+        u_ic = torch.tensor([[u0]], dtype=torch.float32, device=device)
+        v_ic = torch.tensor([[v0]], dtype=torch.float32, device=device)
+        t_test = torch.linspace(t_min, t_max, 500, device=device).view(-1, 1)
+
+        t_ref, u_ref = reference_solution(t_min, t_max, u0, v0, beta, g, l, 500)
+
+        losses = []
+        gif_frames = []
+
+        def save_frame(epoch):
+            with torch.no_grad():
+                fig, ax = plt.subplots(figsize=(10, 6))
+                ax.plot(
+                    t_test.detach().cpu().numpy(),
+                    pinn(t_test).detach().cpu().numpy(),
+                    color="red",
+                    linewidth=2,
+                    label="PINN Prediction",
+                )
+                t_col = collocation_points.detach().cpu().numpy()
+                ax.scatter(
+                    t_col,
+                    np.zeros_like(t_col),
+                    s=10,
+                    color="orange",
+                    alpha=0.5,
+                    label="Collocation Points",
+                )
+                if u_ref is not None:
+                    ax.plot(t_ref, u_ref, "--", color="blue", label="Numerical (SciPy)")
+                ax.set_title(f"PINN Training Progression | Epoch {epoch}")
+                ax.set_xlabel("Time (t)")
+                ax.set_ylabel("Angular displacement u(t)")
+                ax.grid(True)
+                ax.legend()
+
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png")
+                buf.seek(0)
+                gif_frames.append(np.asarray(Image.open(buf).convert("RGB")))
+                plt.close(fig)
+
+        for epoch in range(1, epochs + 1):
+            optimizer.zero_grad()
+
+            ode_residual = physics_residual(pinn, collocation_points, g, l, beta)
+            physics_loss = loss_fn(ode_residual, 
+            torch.zeros_like(ode_residual))
+
+            u_pred_ic = pinn(t_ic)
+            u_t_pred_ic = torch.autograd.grad(
+                u_pred_ic,
+                t_ic,
+                grad_outputs=torch.ones_like(u_pred_ic),
+                create_graph=True,
+                retain_graph=True,
+            )[0]
+            ic_loss = loss_fn(u_pred_ic, u_ic) + loss_fn(u_t_pred_ic, v_ic)
+
+            total_loss = physics_loss + ic_loss
+            total_loss.backward()
+            optimizer.step()
+
+            losses.append((float(total_loss.item()), float(physics_loss.item()), float(ic_loss.item())))
+
+            if epoch % print_every == 0:
+                print(
+                    f"Epoch [{epoch}/{epochs}] "
+                    f"Loss={total_loss.item():.6e} | "
+                    f"Phys={physics_loss.item():.3e} | IC={ic_loss.item():.3e}"
+                )
+            if make_gif and epoch % frame_every == 0:
+                save_frame(epoch)
+
+        with torch.no_grad():
+            u_pred = pinn(t_test).detach().cpu().numpy().reshape(-1)
+            u_col = pinn(collocation_points).detach().cpu().numpy().reshape(-1)
+
+        return {
+            "pinn": pinn,
+            "losses": np.asarray(losses, dtype=np.float64),
+            "t_test": t_test.detach().cpu().numpy().reshape(-1),
+            "u_pred": u_pred,
+            "t_col": collocation_points.detach().cpu().numpy().reshape(-1),
+            "u_col": u_col,
+            "t_ref": t_ref,
+            "u_ref": u_ref,
+            "gif_frames": gif_frames,
+            "make_gif": make_gif,
+        }
+    return (train_model,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ---
+    ## 4. Interactive Experiment
+
+    Adjust parameters below to explore different physical scenarios and training configurations.
+    **Training is cached**—identical parameter sets retrieve precomputed results instantly.
+    """)
+    return
+
+
+@app.cell
+def _(mo, torch):
+    g_slider = mo.ui.slider(5.0, 15.0, value=9.81, step=0.1, label="Gravity g (m/s²)")
+    l_slider = mo.ui.slider(0.5, 2.0, value=1.0, step=0.1, label="Pendulum length l (m)")
+    beta_slider = mo.ui.slider(0.0, 2.0, value=0.5, step=0.05, label="Damping β")
+    u0_slider = mo.ui.slider(0.0, 3.14, value=float(torch.pi / 2), step=0.1, label="Initial angle θ₀ (rad)")
+    v0_slider = mo.ui.slider(-2.0, 2.0, value=0.0, step=0.1, label="Initial velocity ω₀ (rad/s)")
+
+    physical_params = mo.vstack([
+        mo.md("### Physical Parameters"),
+        g_slider,
+        l_slider,
+        beta_slider,
+        u0_slider,
+        v0_slider,
+    ])
+    return (
+        beta_slider,
+        g_slider,
+        l_slider,
+        physical_params,
+        u0_slider,
+        v0_slider,
+    )
+
+
+@app.cell
+def _(mo):
+    t_max_slider = mo.ui.slider(5.0, 20.0, value=10.0, step=1.0, label="Simulation time T (s)")
+    n_collocation = mo.ui.slider(100, 1000, value=500, step=50, label="Collocation points")
+
+    time_params = mo.vstack([
+        mo.md("### Time Domain"),
+        t_max_slider,
+        n_collocation,
+    ])
+    return n_collocation, t_max_slider, time_params
+
+
+@app.cell
+def _(mo):
+    epochs_dropdown = mo.ui.dropdown(
+        options={"5k": 5000, "10k": 10000, "20k": 20000, "30k": 30000, "50k": 50000},
+        value="30k",
+        label="Training epochs"
+    )
+    lr_dropdown = mo.ui.dropdown(
+        options={"1e-4": 1e-4, "5e-4": 5e-4, "1e-3": 1e-3, "5e-3": 5e-3},
+        value="1e-3",
+        label="Learning rate"
+    )
+
+    training_params = mo.vstack([
+        mo.md("### Training Settings"),
+        epochs_dropdown,
+        lr_dropdown,
+    ])
+    return epochs_dropdown, lr_dropdown, training_params
+
+
+@app.cell
+def _(mo):
+    make_gif_checkbox = mo.ui.checkbox(label="Generate training GIF", value=False)
+    frame_interval = mo.ui.slider(50, 500, value=100, step=50, label="GIF frame interval (epochs)")
+
+    viz_params = mo.vstack([
+        mo.md("### Visualization"),
+        make_gif_checkbox,
+        frame_interval,
+    ])
+    return frame_interval, make_gif_checkbox, viz_params
+
+
+@app.cell
+def _(mo, physical_params, time_params, torch, training_params, viz_params):
+    train_button = mo.ui.run_button(label="▶ Train PINN")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device_info = mo.md(f"**Compute Device:** `{device}`")
+
+    control_panel = mo.vstack([
+        physical_params,
+        time_params,
+        training_params,
+        viz_params,
+        mo.md("---"),
+        device_info,
+        train_button,
+    ])
+
+    control_panel
+    return device, train_button
+
+
+@app.cell
+def _(
+    beta_slider,
+    device,
+    epochs_dropdown,
+    frame_interval,
+    g_slider,
+    l_slider,
+    lr_dropdown,
+    make_gif_checkbox,
+    mo,
+    n_collocation,
+    t_max_slider,
+    train_button,
+    train_model,
+    u0_slider,
+    v0_slider,
+):
+    mo.stop(not train_button.value, mo.md("_Click **▶ Train PINN** to begin._"))
+
+    results = train_model(
+        t_min=0.0,
+        t_max=t_max_slider.value,
+        u0=u0_slider.value,
+        v0=v0_slider.value,
+        g=g_slider.value,
+        l=l_slider.value,
+        beta=beta_slider.value,
+        num_collocation_points=n_collocation.value,
+        epochs=epochs_dropdown.value,
+        lr=lr_dropdown.value,
+        print_every=100,
+        frame_every=frame_interval.value,
+        make_gif=make_gif_checkbox.value,
+        device_type=device.type,
+    )
+    return (results,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ---
+    ## 5. Results Analysis
+
+    ### What to Look For:
+    - **Solution accuracy**: How well does the PINN match numerical integration?
+    - **Physics violation**: Is the ODE residual close to zero everywhere?
+    - **Training dynamics**: Which loss component dominates? Is convergence smooth?
+    - **Phase space structure**: Does the trajectory spiral toward equilibrium correctly?
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ### 5.1 Solution Comparison
+
+    **Red line**: PINN prediction (query anywhere in $[0, T]$)
+    **Blue dashed**: SciPy numerical baseline (RK45 method)
+    **Orange dots**: Collocation points where physics loss is enforced
+    **Green circle**: Initial condition $(t=0, 	heta_0)$
+
+    The **shaded error region** quantifies deviation from the numerical ground truth.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(np, plt, results, u0_slider):
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    ax.plot(results["t_test"], results["u_pred"], 'r-', linewidth=2, label='PINN Solution', zorder=3)
+
+    if results["u_ref"] is not None:
+        ax.plot(results["t_ref"], results["u_ref"], 'b--', linewidth=2, label='SciPy (Numerical)', alpha=0.8)
+
+        error = np.abs(results["u_pred"] - results["u_ref"])
+        ax.fill_between(results["t_test"], results["u_pred"] - error, results["u_pred"] + error,
+                         alpha=0.2, color='red', label='Absolute Error')
+
+    ax.scatter(results["t_col"], np.zeros_like(results["t_col"]), s=15, c='orange',
+               alpha=0.5, label=f'Collocation Points (n={len(results["t_col"])})', zorder=2)
+
+    ax.plot(0, u0_slider.value, 'go', markersize=10, label='IC: θ(0)', zorder=4)
+
+    ax.set_xlabel('Time (s)', fontsize=12)
+    ax.set_ylabel('Angular Displacement θ(t) (rad)', fontsize=12)
+    ax.set_title('PINN Solution: Damped Pendulum', fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc='best', framealpha=0.9)
+    plt.tight_layout()
+    fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 5.2 Physics Residual Analysis
+
+    **This is the smoking gun**: a good PINN should satisfy the ODE **everywhere**, not just at collocation points.
+
+    $$\text{Residual}(t) = \frac{d^2u_\phi}{dt^2}(t) + \beta \frac{du_\phi}{dt}(t) + \frac{g}{l}\sin(u_\phi(t))$$
+
+    **Ideal behavior:** Residual $\approx 10^{-6}$ or lower (limited by floating-point precision).
+    **Warning signs:** Oscillations, systematic bias, or regions with large residual indicate underfitting.
+
+    The **symlog scale** reveals both large violations (linear region) and near-zero values (logarithmic region).
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(
+    beta_slider,
+    device,
+    g_slider,
+    l_slider,
+    physics_residual,
+    plt,
+    results,
+    t_max_slider,
+    torch,
+):
+    t_fine = torch.linspace(0.0, t_max_slider.value, 1000, device=device).view(-1, 1)
+    t_fine.requires_grad_(True)
+    residual = physics_residual(results["pinn"], t_fine, g_slider.value, l_slider.value, beta_slider.value).cpu().detach().numpy()
+
+    fig_residual, ax_residual = plt.subplots(figsize=(12, 5))
+    t_fine_np = t_fine.cpu().detach().numpy()
+    ax_residual.plot(t_fine_np, residual, 'purple', linewidth=1.5)
+    ax_residual.axhline(0, color='k', linestyle='--', alpha=0.5)
+    ax_residual.fill_between(t_fine_np.ravel(), 0, residual.ravel(),
+                     alpha=0.3, color='purple')
+
+    ax_residual.set_xlabel('Time (s)', fontsize=12)
+    ax_residual.set_ylabel('ODE Residual', fontsize=12)
+    ax_residual.set_title(r'Physics Constraint Satisfaction: $\ddot{u} + \beta\dot{u} + (g/l)\sin(u)$',
+                 fontsize=13)
+    ax_residual.grid(True, alpha=0.3)
+    ax_residual.set_yscale('symlog', linthresh=1e-6)
+    plt.tight_layout()
+    fig_residual
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ### 5.3 Training Dynamics
+
+    **Left panel (log scale):** Observe exponential decay in early training (rapid progress) followed by
+    slower refinement. Physics and IC losses should decrease in tandem.
+
+    **Right panel (linear scale, final 20%):** Convergence plateau. If losses haven't stabilized,
+    consider increasing epochs or adjusting learning rate.
+
+    **Diagnostic tips:**
+    - **IC loss >> physics loss:** Network struggles to match initial conditions → check IC weighting
+    - **Physics loss >> IC loss:** ODE not satisfied → increase collocation points or training time
+    - **Oscillating losses:** Learning rate too high → reduce by 10×
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(plt, results):
+    losses = results["losses"]
+
+    fig_loss, (ax_log, ax_lin) = plt.subplots(1, 2, figsize=(14, 5))
+
+    ax_log.plot(losses[:, 0], 'k-', linewidth=2, label='Total Loss', alpha=0.8)
+    ax_log.plot(losses[:, 1], 'b-', linewidth=1.5, label='Physics Loss', alpha=0.7)
+    ax_log.plot(losses[:, 2], 'g-', linewidth=1.5, label='IC Loss', alpha=0.7)
+    ax_log.set_yscale('log')
+    ax_log.set_xlabel('Epoch', fontsize=11)
+    ax_log.set_ylabel('MSE Loss (log scale)', fontsize=11)
+    ax_log.set_title('Training Loss Evolution', fontsize=12)
+    ax_log.grid(True, alpha=0.3)
+    ax_log.legend()
+
+    start_idx = int(0.8 * len(losses))
+    ax_lin.plot(range(start_idx, len(losses)), losses[start_idx:, 0],
+             'k-', linewidth=2, label='Total Loss')
+    ax_lin.plot(range(start_idx, len(losses)), losses[start_idx:, 1],
+             'b-', linewidth=1.5, label='Physics Loss')
+    ax_lin.plot(range(start_idx, len(losses)), losses[start_idx:, 2],
+             'g-', linewidth=1.5, label='IC Loss')
+    ax_lin.set_xlabel('Epoch', fontsize=11)
+    ax_lin.set_ylabel('MSE Loss (linear scale)', fontsize=11)
+    ax_lin.set_title('Convergence Detail (Last 20%)', fontsize=12)
+    ax_lin.grid(True, alpha=0.3)
+    ax_lin.legend()
+
+    plt.tight_layout()
+    fig_loss
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ### 5.4 Quantitative Error Metrics
+
+    **Key Metrics:**
+    - **MAE/RMSE**: Average and root-mean-square error vs. numerical baseline
+    - **Max Error**: Worst-case deviation (typically occurs at extrema of motion)
+    - **Physics Residual (L2)**: Global measure of ODE satisfaction
+    - **Final Loss**: Should be $< 10^{-4}$ for well-trained PINNs
+
+    **Benchmark:** For this problem, state-of-the-art PINNs achieve MAE $\sim 10^{-3}$ with 30k epochs.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(
+    beta_slider,
+    device,
+    g_slider,
+    l_slider,
+    mo,
+    np,
+    physics_residual,
+    results,
+    t_max_slider,
+    torch,
+):
+    if results["u_ref"] is not None:
+        mae = np.mean(np.abs(results["u_pred"] - results["u_ref"]))
+        max_error = np.max(np.abs(results["u_pred"] - results["u_ref"]))
+        rmse = np.sqrt(np.mean((results["u_pred"] - results["u_ref"])**2))
+
+        t_fine_metrics = torch.linspace(0.0, t_max_slider.value, 1000, device=device).view(-1, 1)
+        t_fine_metrics.requires_grad_(True)
+        residual_metrics = physics_residual(results["pinn"], t_fine_metrics, g_slider.value, l_slider.value, beta_slider.value)
+        residual_l2 = torch.sqrt(torch.mean(residual_metrics.detach()**2)).item()
+
+        error_metrics_data = [
+            {"Metric": "Mean Absolute Error (MAE)", "Value": f"{mae:.4e}"},
+            {"Metric": "Root Mean Square Error (RMSE)", "Value": f"{rmse:.4e}"},
+            {"Metric": "Maximum Absolute Error", "Value": f"{max_error:.4e}"},
+            {"Metric": "Physics Residual (L2 norm)", "Value": f"{residual_l2:.4e}"},
+            {"Metric": "Final Total Loss", "Value": f"{results['losses'][-1, 0]:.4e}"},
+        ]
+
+        error_display = mo.vstack([
+            mo.ui.table(error_metrics_data, selection=None)
+        ])
+    else:
+        error_display = mo.md("_SciPy reference not available for error computation_")
+
+    error_display
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 5.5 Phase Portrait
+
+    The **phase space** $(\theta, \dot{\theta})$ reveals dynamical structure:
+
+    - **Trajectories spiral inward** toward the stable equilibrium $(0, 0)$
+    - **Initial condition** (green circle) determines starting point
+    - **Rate of spiraling** encodes damping strength
+
+    This visualization is critical for dynamical systems analysis—it shows the **flow of trajectories**
+    independent of time parameterization.
+
+    **Fun experiment:** Try $\theta_0 = \pi$ (inverted pendulum). The trajectory should pass through
+    unstable equilibrium before settling.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(device, np, plt, results, t_max_slider, torch, u0_slider, v0_slider):
+    t_phase = torch.linspace(0.0, t_max_slider.value, 500, device=device).view(-1, 1)
+    t_phase.requires_grad_(True)
+    u_phase = results["pinn"](t_phase)
+    u_dot_phase = torch.autograd.grad(
+        u_phase, t_phase,
+        grad_outputs=torch.ones_like(u_phase),
+        create_graph=False
+    )[0]
+
+    fig_phase, ax_phase = plt.subplots(figsize=(8, 8))
+    ax_phase.plot(u_phase.cpu().detach().numpy(), u_dot_phase.cpu().detach().numpy(),
+            'purple', linewidth=2, label='PINN Trajectory')
+
+    if results["u_ref"] is not None:
+        u_dot_ref = np.gradient(results["u_ref"], results["t_ref"])
+        ax_phase.plot(results["u_ref"], u_dot_ref, 'b--', linewidth=2, alpha=0.7,
+                label='SciPy (Numerical)')
+
+    ax_phase.plot(u0_slider.value, v0_slider.value, 'go', markersize=12, label='Initial Condition', zorder=5)
+
+    ax_phase.plot(0, 0, 'rs', markersize=10, label='Equilibrium (θ=0)', zorder=5)
+
+    ax_phase.set_xlabel('Angular Displacement θ (rad)', fontsize=12)
+    ax_phase.set_ylabel('Angular Velocity dθ/dt (rad/s)', fontsize=12)
+    ax_phase.set_title('Phase Portrait: Damped Pendulum Trajectory', fontsize=14)
+    ax_phase.grid(True, alpha=0.3)
+    ax_phase.legend(loc='best')
+    ax_phase.axhline(0, color='k', linestyle='-', alpha=0.2)
+    ax_phase.axvline(0, color='k', linestyle='-', alpha=0.2)
+    plt.tight_layout()
+    fig_phase
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ### 5.6 Animated Pendulum Motion
+
+    Real-time visualization of the PINN-predicted trajectory. The **red trace** shows recent history.
+
+    **Implementation note:** This uses `matplotlib.animation` + `ffmpeg` to generate an MP4 video—
+    pure Python animations, no external rendering tools needed.
+    """)
+    return
+
+
+@app.cell
+def _(animation, io, l_slider, mo, np, plt, results):
+    if animation is not None:
+        fig_anim, ax_anim = plt.subplots(figsize=(6, 6))
+        ax_anim.set_xlim(-1.5 * l_slider.value, 1.5 * l_slider.value)
+        ax_anim.set_ylim(-1.5 * l_slider.value, 0.5 * l_slider.value)
+        ax_anim.set_aspect('equal')
+        ax_anim.set_title('Pendulum Motion (PINN Prediction)', fontsize=14)
+
+        line, = ax_anim.plot([], [], 'o-', linewidth=3, markersize=15, color='navy')
+
+        trace, = ax_anim.plot([], [], 'r-', alpha=0.3, linewidth=1)
+
+        ax_anim.plot(0, 0, 'ko', markersize=8)
+
+        def init():
+            line.set_data([], [])
+            trace.set_data([], [])
+            return line, trace
+
+        def animate_pendulum(i):
+            angle = results["u_pred"][i]
+
+            x = l_slider.value * np.sin(angle)
+            y = -l_slider.value * np.cos(angle)
+
+            line.set_data([0, x], [0, y])
+
+            start_idx_anim = max(0, i - 20)
+            trace_x = l_slider.value * np.sin(results["u_pred"][start_idx_anim:i+1])
+            trace_y = -l_slider.value * np.cos(results["u_pred"][start_idx_anim:i+1])
+            trace.set_data(trace_x, trace_y)
+
+            return line, trace
+
+        anim = animation.FuncAnimation(
+            fig_anim, animate_pendulum, init_func=init,
+            frames=len(results["u_pred"]), interval=20, blit=True
+        )
+
+        video_buffer = io.BytesIO()
+        anim.save(video_buffer, writer='ffmpeg', format='mp4', fps=30, bitrate=1800)
+        video_buffer.seek(0)
+
+        plt.close(fig_anim)
+
+        animation_display = mo.video(src=video_buffer, controls=True, autoplay=False, loop=True, width=600)
+    else:
+        animation_display = mo.md("_Animation requires matplotlib.animation and ffmpeg_")
+
+    animation_display
+    return
+
+
+@app.cell(hide_code=True)
+def _(imageio, mo, results):
+    if results["make_gif"] and results["gif_frames"]:
+        imageio.mimsave("pinn_training_progression.gif", results["gif_frames"], fps=20)
+        mo.md("✅ **Training GIF saved as `pinn_training_progression.gif`**")
+    else:
+        None
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ---
+    ## 6. Key Takeaways
+
+    ### Strengths Demonstrated:
+    ✅ **Meshfree solution**: Continuous representation, query anywhere
+    ✅ **Automatic derivatives**: No finite-difference errors
+    ✅ **Physics-constrained**: Solution respects governing equations by construction
+    ✅ **Uncertainty quantification**: Residual analysis reveals confidence
+
+    ### Limitations & Extensions:
+    ⚠️ **Training cost**: Requires thousands of gradient steps (vs. milliseconds for RK45)
+    ⚠️ **Stiffness**: Struggles with highly stiff ODEs (large $\beta$) without specialized architectures
+    ⚠️ **Hyperparameter sensitivity**: Collocation density, learning rate, network size all matter
+
+    ### Next Steps:
+    - **Inverse problems**: Learn unknown parameters ($\beta$, $g/l$) from noisy measurements
+    - **PDEs**: Extend to spatiotemporal systems (heat equation, Navier-Stokes)
+    - **Multi-physics**: Couple ODEs with different time scales
+    - **Real-time control**: Use differentiable PINN for model-predictive control
+
+    **Further reading:**
+    - [Raissi et al. (2019)](https://www.sciencedirect.com/science/article/pii/S0021999118307125) - Original PINN paper
+    - [Cuomo et al. (2022)](https://arxiv.org/abs/2201.05624) - Comprehensive review
+    - [Lu et al. (2021)](https://www.nature.com/articles/s42254-021-00314-5) - DeepXDE library
+    """)
+    return
+
+
+if __name__ == "__main__":
+    app.run()

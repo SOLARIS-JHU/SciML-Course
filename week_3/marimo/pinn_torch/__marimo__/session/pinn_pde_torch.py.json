@@ -1,0 +1,450 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.19.9"
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "0978696097241c6a87149183974a437c",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"physics-informed-neural-networks-for-pdes\">Physics-Informed Neural Networks for PDEs</h1>\n<h2 id=\"solving-the-1d-heat-equation-without-discretization\">Solving the 1D Heat Equation Without Discretization</h2>\n<span class=\"paragraph\"><strong>Physics-Informed Neural Networks (PINNs)</strong> train neural networks to satisfy both governing equations\nand boundary/initial conditions simultaneously\u2014no spatial or temporal discretization required.</span>\n<table>\n<thead>\n<tr>\n<th>Traditional PDE Methods</th>\n<th>PINNs</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>Require spatial mesh</td>\n<td><strong>Meshfree</strong>: continuous solution everywhere</td>\n</tr>\n<tr>\n<td>Fixed grid resolution</td>\n<td><strong>Adaptive</strong>: query at any <marimo-tex class=\"arithmatex\">||((x,t)||)</marimo-tex></td>\n</tr>\n<tr>\n<td>Discrete solutions</td>\n<td><strong>Differentiable</strong>: embed in optimization pipelines</td>\n</tr>\n<tr>\n<td>Struggle with sparse data</td>\n<td><strong>Data-efficient</strong>: fuse physics with observations</td>\n</tr>\n</tbody>\n</table>\n<hr />\n<h2 id=\"the-physical-system\">The Physical System</h2>\n<span class=\"paragraph\">The 1D heat equation models thermal diffusion:</span>\n<marimo-tex class=\"arithmatex\">||[\\frac{\\partial u}{\\partial t} = \\alpha \\frac{\\partial^2 u}{\\partial x^2}||]</marimo-tex><span class=\"paragraph\"><strong>Notation:</strong></span>\n<ul>\n<li><marimo-tex class=\"arithmatex\">||(u(x,t)||)</marimo-tex> = temperature at position <marimo-tex class=\"arithmatex\">||(x||)</marimo-tex> and time <marimo-tex class=\"arithmatex\">||(t||)</marimo-tex></li>\n<li><marimo-tex class=\"arithmatex\">||(\\alpha||)</marimo-tex> = thermal diffusivity (controls diffusion rate, units: m\u00b2/s)</li>\n</ul>\n<span class=\"paragraph\"><strong>Physical Interpretation:</strong> Heat flows from hot regions to cold regions, with rate proportional to the second spatial derivative (curvature). High curvature means rapid temperature change.</span>\n<hr />\n<h2 id=\"problem-setup\">Problem Setup</h2>\n<span class=\"paragraph\"><strong>Domain:</strong> <marimo-tex class=\"arithmatex\">||(x \\in [0, 1]||)</marimo-tex>, <marimo-tex class=\"arithmatex\">||(t \\in [0, T]||)</marimo-tex></span>\n<span class=\"paragraph\"><strong>Initial Condition (IC):</strong></span>\n<marimo-tex class=\"arithmatex\">||[u(x, 0) = \\sin(\\pi x)||]</marimo-tex><span class=\"paragraph\">Initial temperature distribution is a half sine wave\u2014hot in the middle, cool at edges.</span>\n<span class=\"paragraph\"><strong>Boundary Conditions (BC):</strong></span>\n<marimo-tex class=\"arithmatex\">||[u(0, t) = 0, \\quad u(1, t) = 0||]</marimo-tex><span class=\"paragraph\">Both endpoints are held at zero temperature (Dirichlet boundary conditions).</span>\n<span class=\"paragraph\"><strong>Analytical Solution:</strong> For this specific problem, the exact solution is known:</span>\n<marimo-tex class=\"arithmatex\">||[u(x,t) = \\sin(\\pi x) e^{-\\pi^2 \\alpha t}||]</marimo-tex><span class=\"paragraph\">This allows us to validate PINN accuracy against ground truth\u2014the spatial profile decays exponentially in time.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "vblA",
+      "code_hash": "04b0a526d5c77c462148970b8c53b667",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><hr />\n<h2 id=\"1-the-pinn-formulation\">1. The PINN Formulation</h2>\n<h3 id=\"core-idea\">Core Idea</h3>\n<span class=\"paragraph\">Approximate <marimo-tex class=\"arithmatex\">||(u(x,t)||)</marimo-tex> with neural network <marimo-tex class=\"arithmatex\">||(u_\\phi(x,t)||)</marimo-tex> by minimizing:</span>\n<marimo-tex class=\"arithmatex\">||[\\mathcal{L}_{\\text{total}} = w_{\\text{PDE}} \\mathcal{L}_{\\text{PDE}} + w_{\\text{IC}} \\mathcal{L}_{\\text{IC}} + w_{\\text{BC}} \\mathcal{L}_{\\text{BC}}||]</marimo-tex><span class=\"paragraph\">where derivatives are computed via <strong>automatic differentiation</strong>.</span>\n<h3 id=\"11-physics-residual\">1.1 Physics Residual</h3>\n<span class=\"paragraph\">The governing equation enforces energy conservation at <strong>collocation points</strong> <marimo-tex class=\"arithmatex\">||(\\{(x_i, t_i)\\}||)</marimo-tex>:</span>\n<marimo-tex class=\"arithmatex\">||[\\mathcal{R}_{\\text{PDE}}(x, t) = \\frac{\\partial u}{\\partial t} - \\alpha \\frac{\\partial^2 u}{\\partial x^2} = 0||]</marimo-tex><span class=\"paragraph\"><strong>Physics Loss:</strong></span>\n<marimo-tex class=\"arithmatex\">||[\\mathcal{L}_{\\text{PDE}} = \\frac{1}{N_c}\\sum_{i=1}^{N_c} \\left[\\frac{\\partial u}{\\partial t}(x_i, t_i) - \\alpha \\frac{\\partial^2 u}{\\partial x^2}(x_i, t_i)\\right]^2||]</marimo-tex><h3 id=\"12-initial-condition\">1.2 Initial Condition</h3>\n<span class=\"paragraph\">Temperature distribution at <marimo-tex class=\"arithmatex\">||(t=0||)</marimo-tex>:</span>\n<marimo-tex class=\"arithmatex\">||[\\mathcal{L}_{\\text{IC}} = \\frac{1}{N_{\\text{IC}}}\\sum_{i=1}^{N_{\\text{IC}}} |u(x_i, 0) - \\sin(\\pi x_i)|^2||]</marimo-tex><h3 id=\"13-boundary-conditions\">1.3 Boundary Conditions</h3>\n<span class=\"paragraph\">Fixed temperature at boundaries (Dirichlet BCs):</span>\n<marimo-tex class=\"arithmatex\">||[\\mathcal{L}_{\\text{BC}} = \\frac{1}{N_{\\text{BC}}}\\sum_{i=1}^{N_{\\text{BC}}} \\left[|u(0, t_i)|^2 + |u(1, t_i)|^2\\right]||]</marimo-tex><h3 id=\"why-multiple-loss-terms\">Why Multiple Loss Terms?</h3>\n<ul>\n<li><strong>PDE loss</strong>: Ensures physics is satisfied throughout the domain</li>\n<li><strong>IC loss</strong>: Matches initial temperature profile</li>\n<li><strong>BC loss</strong>: Enforces boundary temperature constraints</li>\n<li><strong>Weights</strong> <marimo-tex class=\"arithmatex\">||(w_{\\text{PDE}}, w_{\\text{IC}}, w_{\\text{BC}}||)</marimo-tex>: Balance competing objectives</li>\n</ul></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "0224e6d2ed9c273236ba8c504eabf5ff",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"2-neural-network-architecture\">2. Neural Network Architecture</h3>\n<span class=\"paragraph\">A configurable feedforward network (tunable hidden layers and width, tanh activations) maps <marimo-tex class=\"arithmatex\">||((x, t)||)</marimo-tex> to temperature <marimo-tex class=\"arithmatex\">||(u(x,t)||)</marimo-tex>.</span>\n<span class=\"paragraph\"><strong>Input dimension:</strong> 2 (position <marimo-tex class=\"arithmatex\">||(x||)</marimo-tex> and time <marimo-tex class=\"arithmatex\">||(t||)</marimo-tex>)</span>\n<span class=\"paragraph\"><strong>Output dimension:</strong> 1 (temperature <marimo-tex class=\"arithmatex\">||(u||)</marimo-tex>)</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Xref",
+      "code_hash": "dc1ccf9d0178e0d1e318b205bbd59223",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"22-pde-residual-computation-via-automatic-differentiation\">2.2 PDE Residual Computation via Automatic Differentiation</h3>\n<span class=\"paragraph\">PyTorch's <code>torch.autograd.grad</code> computes derivatives of the network output with respect to inputs.</span>\n<span class=\"paragraph\"><strong>Key steps:</strong></span>\n<ol>\n<li><strong>First-order derivatives</strong>: Compute <marimo-tex class=\"arithmatex\">||(\\frac{\\partial u}{\\partial x}||)</marimo-tex> and <marimo-tex class=\"arithmatex\">||(\\frac{\\partial u}{\\partial t}||)</marimo-tex> using <code>torch.autograd.grad</code> with <code>create_graph=True</code></li>\n<li><strong>Second-order derivative</strong>: Compute <marimo-tex class=\"arithmatex\">||(\\frac{\\partial^2 u}{\\partial x^2}||)</marimo-tex> by differentiating <marimo-tex class=\"arithmatex\">||(\\frac{\\partial u}{\\partial x}||)</marimo-tex> again</li>\n<li><strong>Residual</strong>: Combine as <marimo-tex class=\"arithmatex\">||(\\mathcal{R} = u_t - \\alpha u_{xx}||)</marimo-tex></li>\n</ol>\n<span class=\"paragraph\"><strong>Why <code>create_graph=True</code>?</strong> Enables higher-order derivatives by keeping the computational graph for backpropagation through the gradient computation itself.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "RGSE",
+      "code_hash": "1e7f68d3a48ceba5479828880fd8a650",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><hr />\n<h2 id=\"3-interactive-parameters-training\">3. Interactive Parameters &amp; Training</h2>\n<span class=\"paragraph\">Adjust the sliders below to configure the PINN training:</span>\n<ul>\n<li><strong>Physical parameters</strong>: Thermal diffusivity, domain size</li>\n<li><strong>Training parameters</strong>: Collocation points, epochs, learning rate</li>\n<li><strong>Loss weights</strong>: Balance between PDE, IC, and BC enforcement</li>\n<li><strong>Network architecture</strong>: Hidden layer width</li>\n<li><strong>Visualization</strong>: GIF generation options</li>\n</ul></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "nWHF",
+      "code_hash": "e5ff2c7b1c8ae3cdf293d2e87c1c02fb",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><hr />\n<h2 id=\"4-results-analysis\">4. Results Analysis</h2></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "iLit",
+      "code_hash": "ab6ca45e274f0ddd0970070cc871980b",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"41-3d-surface-plot-pinn-solution\">4.1 3D Surface Plot: PINN Solution</h3></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ROlb",
+      "code_hash": "867b7aba09ccc9deddfb0e03e77dc829",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"42-comparison-with-analytical-solution\">4.2 Comparison with Analytical Solution</h3></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "TqIu",
+      "code_hash": "878e23b647e9d57e4d10deecdad1f1c5",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"43-2d-heatmap-visualization\">4.3 2D Heatmap Visualization</h3></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "DnEU",
+      "code_hash": "e557579aa7dfa11da82283e7a0d0c240",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"44-temporal-slices-ux-at-different-times\">4.4 Temporal Slices: u(x) at Different Times</h3></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ecfG",
+      "code_hash": "ca0dc1998165a135af2b4ac1b2076244",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"45-spatial-slices-ut-at-different-positions\">4.5 Spatial Slices: u(t) at Different Positions</h3></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ZBYS",
+      "code_hash": "efe07dd5b4f60f1c9a72a2d47535e6c6",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"46-physics-residual-validation\">4.6 Physics Residual Validation</h3></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "xXTn",
+      "code_hash": "d65c28bd31bf5bb1a732c28e9cb694db",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"47-training-dynamics\">4.7 Training Dynamics</h3></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "pHFh",
+      "code_hash": "b7390d2b6c000777515157fc10a98dae",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"48-error-metrics-summary\">4.8 Error Metrics Summary</h3></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "TRpd",
+      "code_hash": "543873e958a4cd856b3b9ee0e8043c70",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"summary\">Summary</h2>\n<h3 id=\"key-features-of-this-pinn-implementation\">Key Features of this PINN Implementation</h3>\n<span class=\"paragraph\">\u2705 <strong>Multi-term Loss Function</strong></span>\n<ul>\n<li>PDE residual enforces heat equation at collocation points</li>\n<li>Initial condition loss ensures correct starting temperature distribution</li>\n<li>Boundary condition losses maintain fixed boundary temperatures</li>\n</ul>\n<span class=\"paragraph\">\u2705 <strong>Automatic Differentiation</strong></span>\n<ul>\n<li>First-order derivatives: <marimo-tex class=\"arithmatex\">||(\\frac{\\partial u}{\\partial x}||)</marimo-tex>, <marimo-tex class=\"arithmatex\">||(\\frac{\\partial u}{\\partial t}||)</marimo-tex></li>\n<li>Second-order derivative: <marimo-tex class=\"arithmatex\">||(\\frac{\\partial^2 u}{\\partial x^2}||)</marimo-tex></li>\n<li>Computed using PyTorch's autograd with <code>create_graph=True</code></li>\n</ul>\n<span class=\"paragraph\">\u2705 <strong>Validation Against Analytical Solution</strong></span>\n<ul>\n<li>Exact solution: <marimo-tex class=\"arithmatex\">||(u(x,t) = \\sin(\\pi x) e^{-\\pi^2 \\alpha t}||)</marimo-tex></li>\n<li>Provides ground truth for error analysis</li>\n</ul>\n<h3 id=\"strengths\">Strengths</h3>\n<ul>\n<li><strong>No mesh required</strong>: Unlike finite difference/element methods</li>\n<li><strong>Smooth solutions</strong>: Neural network provides continuous interpolation</li>\n<li><strong>Physics-informed</strong>: Satisfies governing equations during training</li>\n</ul>\n<h3 id=\"limitations\">Limitations</h3>\n<ul>\n<li><strong>Computational cost</strong>: Training can be slow for complex PDEs</li>\n<li><strong>Hyperparameter sensitivity</strong>: Loss weights affect convergence</li>\n<li><strong>Local minima</strong>: May require multiple training runs</li>\n</ul>\n<h3 id=\"extensions\">Extensions</h3>\n<ul>\n<li>2D/3D heat equations</li>\n<li>Time-dependent boundary conditions</li>\n<li>Nonlinear PDEs (reaction-diffusion, Burgers' equation)</li>\n<li>Inverse problems (learning unknown parameters)</li>\n</ul></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "MJUe",
+      "code_hash": "ba11356f83999a549a140e42bd904c89",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "e8c2f757e762af8d1f875403e20990a3",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "PKri",
+      "code_hash": "b7259aaa73e5b07d8e7399583320f3ab",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "SFPL",
+      "code_hash": "dc6271de175367b7c868a3aa9aa2cb8f",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "BYtC",
+      "code_hash": "d9e6a61b34cbc9eefa2ec5cd72ff7ef6",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Kclp",
+      "code_hash": "85f942d11cce474d8817b24248ef5bba",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "emfo",
+      "code_hash": "1ae9c4bd07920c2807c57c2356e2792f",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<div style='display: flex;flex: 1;flex-direction: column;justify-content: flex-start;align-items: normal;flex-wrap: nowrap;gap: 0.5rem'><marimo-ui-element object-id='emfo-0' random-id='c4565ea1-5012-3e8e-2ad3-d1f75be6434f'><marimo-button data-initial-value='0' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;\u25b6 Train PINN&lt;/span&gt;&lt;/span&gt;&quot;' data-kind='&quot;neutral&quot;' data-disabled='false' data-full-width='false'></marimo-button></marimo-ui-element><div style='display: flex;flex: 1;flex-direction: column;justify-content: flex-start;align-items: normal;flex-wrap: nowrap;gap: 0.5rem'><span class=\"markdown prose dark:prose-invert contents\"><h4 id=\"physical-parameters\">Physical Parameters</h4></span><marimo-ui-element object-id='Kclp-0' random-id='981a7a15-a7d8-18e5-6a1a-6ddbdc82c51a'><marimo-slider data-initial-value='0.01' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Thermal diffusivity \u03b1&lt;/span&gt;&lt;/span&gt;&quot;' data-start='0.001' data-stop='0.1' data-step='0.001' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><marimo-ui-element object-id='Kclp-1' random-id='9c519cac-89ef-c369-58e4-2281279afdec'><marimo-slider data-initial-value='1.0' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Domain length L&lt;/span&gt;&lt;/span&gt;&quot;' data-start='0.5' data-stop='2.0' data-step='0.1' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><marimo-ui-element object-id='Kclp-2' random-id='29a3ceaf-3f48-289f-eade-0ddc8066187c'><marimo-slider data-initial-value='1.0' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Time horizon T&lt;/span&gt;&lt;/span&gt;&quot;' data-start='0.5' data-stop='2.0' data-step='0.1' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><span class=\"markdown prose dark:prose-invert contents\"><h4 id=\"domain-sampling\">Domain Sampling</h4></span><marimo-ui-element object-id='Kclp-3' random-id='02ba35a4-8933-f932-9b5e-7887c94a4525'><marimo-slider data-initial-value='5000' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Collocation points&lt;/span&gt;&lt;/span&gt;&quot;' data-start='1000' data-stop='10000' data-step='500' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><marimo-ui-element object-id='Kclp-4' random-id='d78e8151-8ec9-889d-a1ce-1554f166f167'><marimo-slider data-initial-value='100' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;IC points&lt;/span&gt;&lt;/span&gt;&quot;' data-start='50' data-stop='300' data-step='10' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><marimo-ui-element object-id='Kclp-5' random-id='5c19fff5-ad9d-9a95-8ab7-ca1c11586b47'><marimo-slider data-initial-value='100' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;BC points&lt;/span&gt;&lt;/span&gt;&quot;' data-start='50' data-stop='300' data-step='10' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><span class=\"markdown prose dark:prose-invert contents\"><h4 id=\"training-configuration\">Training Configuration</h4></span><marimo-ui-element object-id='Kclp-6' random-id='c29d77a0-3989-d871-8e39-8c9ba398a55d'><marimo-dropdown data-initial-value='[&quot;40k&quot;]' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Epochs&lt;/span&gt;&lt;/span&gt;&quot;' data-options='[&quot;5k&quot;,&quot;10k&quot;,&quot;20k&quot;,&quot;40k&quot;,&quot;60k&quot;]' data-allow-select-none='false' data-searchable='false' data-full-width='false'></marimo-dropdown></marimo-ui-element><marimo-ui-element object-id='Kclp-7' random-id='43cad648-81d8-f75a-fe8c-4675ca30d634'><marimo-dropdown data-initial-value='[&quot;1e-3&quot;]' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Learning rate&lt;/span&gt;&lt;/span&gt;&quot;' data-options='[&quot;1e-4&quot;,&quot;5e-4&quot;,&quot;1e-3&quot;,&quot;2e-3&quot;]' data-allow-select-none='false' data-searchable='false' data-full-width='false'></marimo-dropdown></marimo-ui-element><span class=\"markdown prose dark:prose-invert contents\"><h4 id=\"network-architecture\">Network Architecture</h4></span><marimo-ui-element object-id='Kclp-11' random-id='3919900d-6d23-8da4-8751-05a40e277c5e'><marimo-slider data-initial-value='32' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Hidden layer width&lt;/span&gt;&lt;/span&gt;&quot;' data-start='16' data-stop='64' data-step='8' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><marimo-ui-element object-id='Kclp-12' random-id='1d4cac7d-714b-4b8e-a9e1-84fe682985d1'><marimo-slider data-initial-value='3' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Number of hidden layers&lt;/span&gt;&lt;/span&gt;&quot;' data-start='1' data-stop='5' data-step='1' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><span class=\"markdown prose dark:prose-invert contents\"><h4 id=\"loss-weights\">Loss Weights</h4></span><marimo-ui-element object-id='Kclp-8' random-id='59b0db13-eaac-744d-e7df-bc9c399db734'><marimo-slider data-initial-value='1.0' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;PDE loss weight&lt;/span&gt;&lt;/span&gt;&quot;' data-start='0.1' data-stop='10.0' data-step='0.1' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><marimo-ui-element object-id='Kclp-9' random-id='f904dcec-844b-e1a6-24ed-75263ab8a6b0'><marimo-slider data-initial-value='10.0' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;IC loss weight&lt;/span&gt;&lt;/span&gt;&quot;' data-start='0.1' data-stop='20.0' data-step='0.5' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><marimo-ui-element object-id='Kclp-10' random-id='0dbe1842-1b41-0447-25fc-9e9f6bea7a9c'><marimo-slider data-initial-value='10.0' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;BC loss weight&lt;/span&gt;&lt;/span&gt;&quot;' data-start='0.1' data-stop='20.0' data-step='0.5' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><span class=\"markdown prose dark:prose-invert contents\"><h4 id=\"visualization\">Visualization</h4></span><marimo-ui-element object-id='Kclp-13' random-id='7c778893-ec98-4e86-9e23-e37e3c0325e4'><marimo-slider data-initial-value='2000' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Print interval (epochs)&lt;/span&gt;&lt;/span&gt;&quot;' data-start='500' data-stop='5000' data-step='500' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><span class=\"markdown prose dark:prose-invert contents\"><hr /></span><span class=\"markdown prose dark:prose-invert contents\"><span class=\"paragraph\"><strong>Device:</strong> <code>cuda</code></span></span></div></div>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Hstk",
+      "code_hash": "f92d775c140678e26ffc02503028c746",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><span class=\"paragraph\"><em>Click <strong>\u25b6 Train PINN</strong> to begin training</em></span></span>"
+          }
+        }
+      ],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stderr",
+          "text": "/home/honghui/miniconda3/envs/sciml/lib/python3.13/site-packages/torch/autograd/graph.py:865: UserWarning: Attempting to run cuBLAS, but there was no current CUDA context! Attempting to set the primary context... (Triggered internally at /pytorch/aten/src/ATen/cuda/CublasHandlePool.cpp:330.)\n  return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass\n",
+          "mimetype": "text/plain"
+        },
+        {
+          "type": "stream",
+          "name": "stdout",
+          "text": "Epoch [2000/40000], Total Loss: 0.000363, PDE: 0.000205, IC: 0.000007, BC: 0.000009\nEpoch [4000/40000], Total Loss: 0.000621, PDE: 0.000101, IC: 0.000023, BC: 0.000029\nEpoch [6000/40000], Total Loss: 0.000136, PDE: 0.000071, IC: 0.000005, BC: 0.000001\nEpoch [8000/40000], Total Loss: 0.000165, PDE: 0.000059, IC: 0.000007, BC: 0.000004\nEpoch [10000/40000], Total Loss: 0.000083, PDE: 0.000045, IC: 0.000003, BC: 0.000001\nEpoch [12000/40000], Total Loss: 0.000064, PDE: 0.000035, IC: 0.000003, BC: 0.000000\nEpoch [14000/40000], Total Loss: 0.000049, PDE: 0.000027, IC: 0.000002, BC: 0.000000\nEpoch [16000/40000], Total Loss: 0.000041, PDE: 0.000023, IC: 0.000001, BC: 0.000000\nEpoch [18000/40000], Total Loss: 0.000030, PDE: 0.000018, IC: 0.000001, BC: 0.000000\nEpoch [20000/40000], Total Loss: 0.000023, PDE: 0.000014, IC: 0.000001, BC: 0.000000\nEpoch [22000/40000], Total Loss: 0.000018, PDE: 0.000013, IC: 0.000000, BC: 0.000000\nEpoch [24000/40000], Total Loss: 0.000016, PDE: 0.000012, IC: 0.000000, BC: 0.000000\nEpoch [26000/40000], Total Loss: 0.000032, PDE: 0.000011, IC: 0.000001, BC: 0.000001\nEpoch [28000/40000], Total Loss: 0.000096, PDE: 0.000011, IC: 0.000002, BC: 0.000007\nEpoch [30000/40000], Total Loss: 0.000030, PDE: 0.000010, IC: 0.000001, BC: 0.000001\nEpoch [32000/40000], Total Loss: 0.000014, PDE: 0.000010, IC: 0.000000, BC: 0.000000\nEpoch [34000/40000], Total Loss: 0.000021, PDE: 0.000010, IC: 0.000000, BC: 0.000001\n",
+          "mimetype": "text/plain"
+        }
+      ]
+    },
+    {
+      "id": "ZHCJ",
+      "code_hash": "74d9760b812bb661507f32d784b4a72f",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "qnkX",
+      "code_hash": "de375bd9b0e3ce373313843ddd9c78ef",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Vxnm",
+      "code_hash": "715106111775dd4ac8e8ddbe484a33d6",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ulZA",
+      "code_hash": "9a9349023d7ab7b32c04882d30d98832",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Pvdt",
+      "code_hash": "62a6a1f7f9b363b9615f956ece75c7ab",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "aLJB",
+      "code_hash": "f186c5b1ba858a789c4b9565c1790b12",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "nHfw",
+      "code_hash": "13b60dc85bf96077c3f8d774a15f2658",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "AjVT",
+      "code_hash": "31fa77dfd3e7870bab62823a6c7da786",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "NCOB",
+      "code_hash": "c7ff9a45d3d6cdf0d151c309e62b74cd",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "aqbW",
+      "code_hash": "c921090460b02fca0c79e721bbe4a58d",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    }
+  ]
+}
