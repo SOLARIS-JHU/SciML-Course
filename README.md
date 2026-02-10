@@ -24,14 +24,14 @@ Johns Hopkins University (JHU)
 
 This repository contains weekly lecture material and code examples for the SciML course.
 
-- Week 1: Introduction 
-- Week 2: Differentiable programming 
+- Week 1: Introduction to SciML
+- Week 2: Differentiable programming fundamentals
 - Week 3: Physics-Informed Neural Networks 
-- Week 4: Neural ODEs 
+- Week 4: Neural Ordinary Differential Equations 
 - Week 5: Learning to Optimize
-- Week 6: Optimal control and MPC-style examples
+- Week 6: Optimal control fundamentals
 - Week 7: Learning to Control 
-- Week 8: Neural Differential Equations
+- Week 8: Neural Differential Equations with Constraints
 - Week 9: Differentiable optimization 
 - Week 10: Feasibility layers 
 
