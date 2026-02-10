@@ -16,7 +16,10 @@
 import marimo
 
 __generated_with = "0.19.9"
-app = marimo.App(app_title="PINN for 1D Heat Equation (PyTorch)")
+app = marimo.App(
+    app_title="PINN for 1D Heat Equation (PyTorch)",
+    auto_download=["html", "ipynb"],
+)
 
 
 @app.cell(hide_code=True)
@@ -72,6 +75,8 @@ def _(mo):
     $$u(x,t) = \sin(\pi x) e^{-\pi^2 \alpha t}$$
 
     This allows us to validate PINN accuracy against ground truth—the spatial profile decays exponentially in time.
+
+    **Navigation:** [Jump to Control Panel](#control-panel)
     """)
     return
 
@@ -247,6 +252,14 @@ def _(torch):
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 2.3 Training Loop
+    """)
+    return
+
+
 @app.cell
 def _(mo, np):
     @mo.persistent_cache
@@ -398,6 +411,7 @@ def _(mo, np):
 def _(mo):
     mo.md(r"""
     ---
+    <a id="control-panel"></a>
     ## 3. Interactive Parameters & Training
 
     Adjust the sliders below to configure the PINN training:
@@ -407,12 +421,20 @@ def _(mo):
     - **Loss weights**: Balance between PDE, IC, and BC enforcement
     - **Network architecture**: Hidden layer width
     - **Visualization**: GIF generation options
+
+    **Tuning tips (concise):**
+    - Keep physical parameters fixed unless the exercise explicitly asks you to change them.
+    - Increase collocation points to improve PDE coverage; this usually improves accuracy but increases runtime.
+    - Increase epochs while losses are still decreasing; stop when improvement plateaus.
+    - Lower learning rate if training oscillates/diverges; raise it slightly if convergence is too slow.
+    - Rebalance loss weights if IC/BC errors stay high while PDE loss decreases (or vice versa).
+    - Increase network width/depth for sharper solution features; larger models are slower and harder to train.
     """)
     return
 
 
 @app.cell(hide_code=True)
-def _(mo):
+def _(mo, torch):
     # Physical parameters
     alpha_slider = mo.ui.slider(
         0.001, 0.1, value=0.01, step=0.001, label="Thermal diffusivity α"
@@ -466,43 +488,8 @@ def _(mo):
     print_every_slider = mo.ui.slider(
         500, 5000, value=2000, step=500, label="Print interval (epochs)"
     )
-    return (
-        alpha_slider,
-        bc_weight_slider,
-        epochs_dropdown,
-        hidden_width_slider,
-        ic_weight_slider,
-        lr_dropdown,
-        n_bc_slider,
-        n_collocation_slider,
-        n_ic_slider,
-        num_layers_slider,
-        pde_weight_slider,
-        print_every_slider,
-        t_max_slider,
-        x_max_slider,
-    )
 
 
-@app.cell(hide_code=True)
-def _(
-    alpha_slider,
-    bc_weight_slider,
-    epochs_dropdown,
-    hidden_width_slider,
-    ic_weight_slider,
-    lr_dropdown,
-    mo,
-    n_bc_slider,
-    n_collocation_slider,
-    n_ic_slider,
-    num_layers_slider,
-    pde_weight_slider,
-    print_every_slider,
-    t_max_slider,
-    torch,
-    x_max_slider,
-):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     control_panel = mo.vstack([
@@ -533,10 +520,27 @@ def _(
     train_button = mo.ui.run_button(label="▶ Train PINN")
 
     mo.vstack([train_button, control_panel])
-    return device, train_button
+    return (
+        alpha_slider,
+        bc_weight_slider,
+        device,
+        epochs_dropdown,
+        hidden_width_slider,
+        ic_weight_slider,
+        lr_dropdown,
+        n_bc_slider,
+        n_collocation_slider,
+        n_ic_slider,
+        num_layers_slider,
+        pde_weight_slider,
+        print_every_slider,
+        t_max_slider,
+        train_button,
+        x_max_slider,
+    )
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     alpha_slider,
     bc_weight_slider,

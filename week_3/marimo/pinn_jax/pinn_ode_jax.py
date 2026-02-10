@@ -27,15 +27,14 @@ def _(mo):
     | Ignore sparse data | **Data-efficient**: fuse physics with observations |
 
     This implementation uses **JAX** for automatic differentiation with functional programming patterns.
+
+    **Navigation:** [Jump to Control Panel](#control-panel)
     """)
     return
 
 
 @app.cell(hide_code=True)
 def _():
-    import base64
-    import io
-    import imageio
     import marimo as mo
     import matplotlib.pyplot as plt
     import numpy as np
@@ -43,7 +42,6 @@ def _():
     import jax.numpy as jnp
     import equinox as eqx
     import optax
-    from PIL import Image
 
     try:
         from scipy.integrate import solve_ivp
@@ -54,7 +52,7 @@ def _():
         import matplotlib.animation as animation
     except ImportError:
         animation = None
-    return Image, animation, eqx, imageio, io, jax, jnp, mo, np, optax, plt, solve_ivp
+    return animation, eqx, jax, jnp, mo, np, optax, plt, solve_ivp
 
 
 @app.cell(hide_code=True)
@@ -195,17 +193,15 @@ def _(mo):
 
 @app.cell
 def _(
-    Image,
     PINN,
+    animation,
     eqx,
-    io,
     jax,
     jnp,
     mo,
     np,
     optax,
     physics_residual_batch,
-    plt,
     reference_solution,
 ):
     @mo.persistent_cache
@@ -268,29 +264,7 @@ def _(
             model = eqx.apply_updates(model, updates)
             return model, opt_state, loss, phys_loss, ic_loss_val
 
-        # Frame saving for GIF
-        gif_frames = []
-
-        def save_frame(epoch, current_model):
-            fig, ax = plt.subplots(figsize=(10, 6))
-            u_pred_plot = jax.vmap(lambda t: current_model(t)[0])(t_test)
-            ax.plot(np.array(t_test), np.array(u_pred_plot), 'r-', linewidth=2, label='PINN')
-
-            if u_ref is not None:
-                ax.plot(t_ref, u_ref, 'b--', linewidth=2, label='Numerical')
-
-            ax.scatter(np.array(t_col), np.zeros(n_collocation), s=10, c='orange', alpha=0.5, label='Collocation')
-            ax.set_title(f'Epoch {epoch}')
-            ax.set_xlabel('Time (t)')
-            ax.set_ylabel('Angle θ(t)')
-            ax.grid(True, alpha=0.3)
-            ax.legend()
-
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png')
-            buf.seek(0)
-            gif_frames.append(np.asarray(Image.open(buf).convert('RGB')))
-            plt.close(fig)
+        animation_snapshots = []
 
         # Training loop
         losses = []
@@ -304,7 +278,13 @@ def _(
                       f"Phys={phys_loss:.3e} | IC={ic_loss:.3e}")
 
             if make_gif and epoch % frame_every == 0:
-                save_frame(epoch, model)
+                u_snapshot = jax.vmap(lambda t: model(t)[0])(t_test)
+                animation_snapshots.append(
+                    {
+                        "epoch": epoch,
+                        "u_pred": np.array(u_snapshot).flatten(),
+                    }
+                )
 
         # Final predictions
         u_pred = jax.vmap(lambda t: model(t)[0])(t_test)
@@ -317,7 +297,7 @@ def _(
             't_col': np.array(t_col).flatten(),
             't_ref': t_ref,
             'u_ref': u_ref,
-            'gif_frames': gif_frames,
+            'animation_snapshots': animation_snapshots,
             'make_gif': make_gif
         }
     return (train_model,)
@@ -326,9 +306,18 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md("""
+    <a id="control-panel"></a>
     ### 2.4 Interactive Parameters
 
     Adjust physical, numerical, and training parameters below. Training results are cached.
+
+    **Tuning tips (concise):**
+    - Keep physical parameters fixed unless the exercise explicitly asks you to change them.
+    - Increase collocation points to enforce physics better; this usually improves accuracy but increases runtime.
+    - Increase epochs while losses are still decreasing; stop when improvement plateaus.
+    - Lower learning rate if training is unstable/oscillatory; raise it slightly if convergence is too slow.
+    - Rebalance loss weights when one constraint dominates (PDE residual vs IC mismatch).
+    - Increase network width/depth for harder dynamics; larger models are slower and harder to optimize.
     """)
     return
 
@@ -361,8 +350,8 @@ def _(mo, np):
     num_layers_slider = mo.ui.slider(1, 5, value=2, step=1, label="Number of hidden layers")
 
     # Visualization
-    make_gif_checkbox = mo.ui.checkbox(label="Generate training GIF", value=False)
-    frame_interval = mo.ui.slider(50, 500, value=100, step=50, label="GIF frame interval")
+    make_gif_checkbox = mo.ui.checkbox(label="Show training animation", value=False)
+    frame_interval = mo.ui.slider(50, 500, value=100, step=50, label="Animation frame interval")
 
     # JAX-specific: random seed
     seed_slider = mo.ui.slider(0, 9999, value=42, step=1, label="Random seed")
@@ -487,28 +476,97 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(np, plt, results, u0_slider):
-    fig1, ax1 = plt.subplots(figsize=(12, 6))
-    ax1.plot(results['t_test'], results['u_pred'], 'r-', linewidth=2, label='PINN', zorder=3)
+def _(animation, mo, np, plt, results, u0_slider):
+    snapshots = results.get("animation_snapshots", [])
+    if results.get("make_gif") and snapshots and animation is not None:
+        try:
+            _fig_anim, _ax_anim = plt.subplots(figsize=(12, 6))
+            t_test = np.asarray(results["t_test"])
+            t_col = np.asarray(results["t_col"])
 
-    if results['u_ref'] is not None:
-        ax1.plot(results['t_ref'], results['u_ref'], 'b--', linewidth=2, label='Numerical', alpha=0.8)
-        error = np.abs(results['u_pred'] - results['u_ref'])
-        ax1.fill_between(results['t_test'], results['u_pred'] - error, results['u_pred'] + error,
-                        alpha=0.2, color='red', label='Error')
+            curve_arrays = [np.asarray(results["u_pred"])]
+            if results["u_ref"] is not None:
+                curve_arrays.append(np.asarray(results["u_ref"]))
+            curve_arrays.extend(np.asarray(frame["u_pred"]) for frame in snapshots)
+            all_values = np.concatenate(curve_arrays)
+            y_min = float(all_values.min())
+            y_max = float(all_values.max())
+            pad = max(0.1 * (y_max - y_min), 1e-3)
 
-    ax1.scatter(results['t_col'], np.zeros_like(results['t_col']), s=15, c='orange',
-               alpha=0.5, label=f"Collocation (n={len(results['t_col'])})", zorder=2)
-    ax1.plot(0, u0_slider.value, 'go', markersize=10, label='IC', zorder=4)
+            _ax_anim.set_xlim(float(t_test.min()), float(t_test.max()))
+            _ax_anim.set_ylim(y_min - pad, y_max + pad)
+            _ax_anim.set_xlabel("Time (s)", fontsize=12)
+            _ax_anim.set_ylabel("Angle θ(t) (rad)", fontsize=12)
+            _ax_anim.grid(True, alpha=0.3)
 
-    ax1.set_xlabel('Time (s)', fontsize=12)
-    ax1.set_ylabel('Angle θ(t) (rad)', fontsize=12)
-    ax1.set_title('PINN Solution: Damped Pendulum (JAX)', fontsize=14, fontweight='bold')
-    ax1.grid(True, alpha=0.3)
-    ax1.legend(loc='best')
-    plt.tight_layout()
-    fig1
-    return ax1, error, fig1
+            _line_solution, = _ax_anim.plot([], [], "r-", linewidth=2, label="PINN")
+            if results["u_ref"] is not None:
+                _ax_anim.plot(results["t_ref"], results["u_ref"], "b--", linewidth=2, alpha=0.8, label="Numerical")
+            _ax_anim.scatter(t_col, np.zeros_like(t_col), s=10, c="orange", alpha=0.35, label="Collocation")
+            _ax_anim.plot(0, u0_slider.value, "go", markersize=8, label="IC")
+            _epoch_text_solution = _ax_anim.text(0.02, 0.95, "", transform=_ax_anim.transAxes, va="top")
+            _ax_anim.legend(loc="best")
+
+            def _init_solution_anim():
+                _line_solution.set_data([], [])
+                _epoch_text_solution.set_text("")
+                return _line_solution, _epoch_text_solution
+
+            def _animate_solution_frame(i):
+                frame = snapshots[i]
+                _line_solution.set_data(t_test, frame["u_pred"])
+                _epoch_text_solution.set_text(f"Training epoch: {frame['epoch']}")
+                return _line_solution, _epoch_text_solution
+
+            _solution_anim_obj = animation.FuncAnimation(
+                _fig_anim,
+                _animate_solution_frame,
+                init_func=_init_solution_anim,
+                frames=len(snapshots),
+                interval=150,
+                blit=True,
+            )
+            _video_html_solution = _solution_anim_obj.to_html5_video()
+            plt.close(_fig_anim)
+            solution_output = mo.Html(_video_html_solution)
+        except Exception as e:
+            solution_output = mo.md(f"_Animation rendering error: {e}_")
+    else:
+        fig1, ax1 = plt.subplots(figsize=(12, 6))
+        ax1.plot(results["t_test"], results["u_pred"], "r-", linewidth=2, label="PINN", zorder=3)
+
+        if results["u_ref"] is not None:
+            ax1.plot(results["t_ref"], results["u_ref"], "b--", linewidth=2, label="Numerical", alpha=0.8)
+            error = np.abs(results["u_pred"] - results["u_ref"])
+            ax1.fill_between(
+                results["t_test"],
+                results["u_pred"] - error,
+                results["u_pred"] + error,
+                alpha=0.2,
+                color="red",
+                label="Error",
+            )
+
+        ax1.scatter(
+            results["t_col"],
+            np.zeros_like(results["t_col"]),
+            s=15,
+            c="orange",
+            alpha=0.5,
+            label=f"Collocation (n={len(results['t_col'])})",
+            zorder=2,
+        )
+        ax1.plot(0, u0_slider.value, "go", markersize=10, label="IC", zorder=4)
+        ax1.set_xlabel("Time (s)", fontsize=12)
+        ax1.set_ylabel("Angle θ(t) (rad)", fontsize=12)
+        ax1.set_title("PINN Solution: Damped Pendulum (JAX)", fontsize=14, fontweight="bold")
+        ax1.grid(True, alpha=0.3)
+        ax1.legend(loc="best")
+        plt.tight_layout()
+        solution_output = fig1
+
+    solution_output
+    return
 
 
 @app.cell(hide_code=True)

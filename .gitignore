@@ -1,4 +1,6 @@
 .claude/
+.agents/
+.codex/
 CLAUDE.md
 AGENTS.md
 .cursorrules

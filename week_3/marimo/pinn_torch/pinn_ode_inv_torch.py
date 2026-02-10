@@ -6,8 +6,11 @@
 
 import marimo
 
-__generated_with = "0.19.7"
-app = marimo.App(app_title="Inverse PINN ODE (Torch)")
+__generated_with = "0.19.9"
+app = marimo.App(
+    app_title="Inverse PINN ODE (Torch)",
+    auto_download=["html", "ipynb"],
+)
 
 
 @app.cell(hide_code=True)
@@ -27,6 +30,8 @@ def _(mo):
     | Solution from equations | Solution + **parameter estimation** |
     | Physics loss only | Physics + **data misfit** loss |
     | No measurements needed | Uses **sparse observations** |
+
+    **Task**: Use the [Control Panel](#control-panel) to tune the hyperparameters.
     """)
     return
 
@@ -88,6 +93,7 @@ def _(mo, np, solve_ivp):
         t_ref = np.linspace(t_min, t_max, n_eval)
         u_ref = sol.sol(t_ref)[0]
         return t_ref, u_ref
+
     return (reference_solution,)
 
 
@@ -115,6 +121,7 @@ def _(mo, np, solve_ivp):
         u_meas = u_clean + rng.normal(0.0, noise_std, size=num_meas)
 
         return t_meas, u_meas
+
     return (generate_measurements,)
 
 
@@ -162,6 +169,7 @@ def _(nn, torch):
 
         def forward(self, t):
             return self.net(t)
+
     return (InversePINN,)
 
 
@@ -187,6 +195,7 @@ def _(torch):
         u_tt = torch.autograd.grad(u_t, t, grad_outputs=torch.ones_like(u_t),
                                     create_graph=True, retain_graph=True)[0]
         return u_tt + model.beta_hat * u_t + (g / l) * torch.sin(u)
+
     return (physics_residual,)
 
 
@@ -227,7 +236,7 @@ def _(
     def train_model(t_min, t_max, u0, v0, g, l, beta_true, beta_init,
                     n_collocation, num_meas, noise_std, meas_seed,
                     epochs, lr, physics_weight, ic_weight, data_weight,
-                    hidden_width, num_layers, print_every, device_type):
+                    hidden_width, num_layers, print_every, frame_every, make_gif, device_type):
         device = torch.device(device_type)
         model = InversePINN(hidden_width=hidden_width, num_layers=num_layers, beta_init=beta_init).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -260,6 +269,7 @@ def _(
 
         losses = []
         beta_history = []
+        animation_snapshots = []
 
         # Training loop
         for epoch in range(1, epochs + 1):
@@ -291,6 +301,15 @@ def _(
                 print(f"Epoch {epoch}/{epochs} | Loss={total_loss:.3e} | "
                       f"Phys={phys_loss:.3e} | IC={ic_loss:.3e} | Data={data_loss:.3e} | "
                       f"β̂={model.beta_hat.item():.5f}")
+            if epoch % frame_every == 0:
+                with torch.no_grad():
+                    animation_snapshots.append(
+                        {
+                            "epoch": epoch,
+                            "u_pred": model(t_test).cpu().numpy().flatten(),
+                            "beta_hat": float(model.beta_hat.item()),
+                        }
+                    )
 
         # Final predictions
         with torch.no_grad():
@@ -306,23 +325,35 @@ def _(
             't_meas': t_meas.cpu().numpy().flatten(),
             'u_meas': u_meas.cpu().numpy().flatten(),
             't_ref': t_ref,
-            'u_ref': u_ref
+            'u_ref': u_ref,
+            'animation_snapshots': animation_snapshots,
+            'make_gif': make_gif,
         }
+
     return (train_model,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md("""
-    ### 2.5 Tune Parameters & Start Training
+    <a id="control-panel"></a>
+    ### 2.5 Tune Parameters & Start Training 🍼
 
     Adjust physical, measurement, and training parameters below. Results are cached.
+
+    **Tuning tips (concise):**
+    - Keep physical parameters fixed unless the exercise explicitly asks you to change them.
+    - Increase collocation points to enforce physics better; this usually improves accuracy but increases runtime.
+    - Increase epochs while losses are still decreasing; stop when improvement plateaus.
+    - Lower learning rate if training is unstable/oscillatory; raise it slightly if convergence is too slow.
+    - Rebalance loss weights when one term dominates (physics, IC, or data loss).
+    - Increase network width/depth for harder dynamics; larger models are slower and harder to optimize.
     """)
     return
 
 
 @app.cell(hide_code=True)
-def _(mo, np):
+def _(mo, np, torch):
     # Physical parameters (known)
     g_slider = mo.ui.slider(5.0, 15.0, value=9.81, step=0.1, label="Gravity g (m/s²)")
     l_slider = mo.ui.slider(0.5, 2.0, value=1.0, step=0.1, label="Length l (m)")
@@ -351,6 +382,8 @@ def _(mo, np):
                                       value="20k", label="Epochs")
     lr_dropdown = mo.ui.dropdown({"1e-4": 1e-4, "5e-4": 5e-4, "1e-3": 1e-3, "5e-3": 5e-3},
                                   value="1e-3", label="Learning rate")
+    make_gif_checkbox = mo.ui.checkbox(label="Show training animation", value=True)
+    frame_interval = mo.ui.slider(50, 500, value=200, step=50, label="Animation frame interval")
 
     # Loss weights
     physics_weight = mo.ui.slider(0.0, 10.0, value=1.0, step=0.1, label="Physics loss weight")
@@ -360,51 +393,6 @@ def _(mo, np):
     # Network architecture
     hidden_width_slider = mo.ui.slider(16, 128, value=32, step=8, label="Hidden layer width")
     num_layers_slider = mo.ui.slider(1, 5, value=2, step=1, label="Number of hidden layers")
-    return (
-        beta_init_slider,
-        beta_true_slider,
-        data_weight_slider,
-        epochs_dropdown,
-        g_slider,
-        hidden_width_slider,
-        ic_weight,
-        l_slider,
-        lr_dropdown,
-        meas_seed_slider,
-        n_collocation,
-        noise_slider,
-        num_layers_slider,
-        num_meas_slider,
-        physics_weight,
-        t_max_slider,
-        u0_slider,
-        v0_slider,
-    )
-
-
-@app.cell
-def _(
-    beta_init_slider,
-    beta_true_slider,
-    data_weight_slider,
-    epochs_dropdown,
-    g_slider,
-    hidden_width_slider,
-    ic_weight,
-    l_slider,
-    lr_dropdown,
-    meas_seed_slider,
-    mo,
-    n_collocation,
-    noise_slider,
-    num_layers_slider,
-    num_meas_slider,
-    physics_weight,
-    t_max_slider,
-    torch,
-    u0_slider,
-    v0_slider,
-):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -417,6 +405,8 @@ def _(
         u0_slider, v0_slider,
         mo.md("#### Domain & Training"),
         t_max_slider, n_collocation, epochs_dropdown, lr_dropdown,
+        mo.md("#### Visualization"),
+        make_gif_checkbox, frame_interval,
         mo.md("#### Measurement Data"),
         num_meas_slider, noise_slider, meas_seed_slider,
         mo.md("#### Network Architecture"),
@@ -430,21 +420,46 @@ def _(
     train_button = mo.ui.run_button(label="▶ Train Inverse PINN")
 
     mo.vstack([train_button, control_panel])
-    return device, train_button
+    return (
+        beta_init_slider,
+        beta_true_slider,
+        data_weight_slider,
+        device,
+        epochs_dropdown,
+        frame_interval,
+        g_slider,
+        hidden_width_slider,
+        ic_weight,
+        l_slider,
+        lr_dropdown,
+        make_gif_checkbox,
+        meas_seed_slider,
+        n_collocation,
+        noise_slider,
+        num_layers_slider,
+        num_meas_slider,
+        physics_weight,
+        t_max_slider,
+        train_button,
+        u0_slider,
+        v0_slider,
+    )
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     beta_init_slider,
     beta_true_slider,
     data_weight_slider,
     device,
     epochs_dropdown,
+    frame_interval,
     g_slider,
     hidden_width_slider,
     ic_weight,
     l_slider,
     lr_dropdown,
+    make_gif_checkbox,
     meas_seed_slider,
     mo,
     n_collocation,
@@ -470,7 +485,10 @@ def _(
         epochs=epochs_dropdown.value, lr=lr_dropdown.value,
         physics_weight=physics_weight.value, ic_weight=ic_weight.value, data_weight=data_weight_slider.value,
         hidden_width=hidden_width_slider.value, num_layers=num_layers_slider.value,
-        print_every=200, device_type=device.type
+        print_every=200,
+        frame_every=frame_interval.value,
+        make_gif=make_gif_checkbox.value,
+        device_type=device.type,
     )
     return (results,)
 
@@ -495,32 +513,124 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(beta_true_slider, np, plt, results, u0_slider):
-    fig1, ax1 = plt.subplots(figsize=(12, 6))
-    ax1.plot(results['t_test'], results['u_pred'], 'r-', linewidth=2, label='PINN', zorder=3)
+def _(animation, beta_true_slider, mo, np, plt, results, u0_slider):
+    snapshots = results.get("animation_snapshots", [])
+    if snapshots and animation is not None:
+        try:
+            _fig_anim, _ax_anim = plt.subplots(figsize=(12, 6))
+            t_test = np.asarray(results["t_test"])
+            t_meas = np.asarray(results["t_meas"])
+            u_meas = np.asarray(results["u_meas"])
+            t_col = np.asarray(results["t_col"])
 
-    # Measurements
-    ax1.scatter(results['t_meas'], results['u_meas'], s=40, c='green', alpha=0.6,
-               label=f"Measurements (n={len(results['t_meas'])})", zorder=4, edgecolors='darkgreen')
+            curve_arrays = [np.asarray(results["u_pred"])]
+            if results["u_ref"] is not None:
+                curve_arrays.append(np.asarray(results["u_ref"]))
+            curve_arrays.extend(np.asarray(frame["u_pred"]) for frame in snapshots)
+            all_values = np.concatenate(curve_arrays)
+            y_min = float(all_values.min())
+            y_max = float(all_values.max())
+            pad = max(0.1 * (y_max - y_min), 1e-3)
 
-    if results['u_ref'] is not None:
-        ax1.plot(results['t_ref'], results['u_ref'], 'b--', linewidth=2, label='True solution', alpha=0.8)
-        error = np.abs(results['u_pred'] - results['u_ref'])
-        ax1.fill_between(results['t_test'], results['u_pred'] - error, results['u_pred'] + error,
-                        alpha=0.2, color='red', label='Error')
+            _ax_anim.set_xlim(float(t_test.min()), float(t_test.max()))
+            _ax_anim.set_ylim(y_min - pad, y_max + pad)
+            _ax_anim.set_xlabel("Time (s)", fontsize=12)
+            _ax_anim.set_ylabel("Angle θ(t) (rad)", fontsize=12)
+            _ax_anim.grid(True, alpha=0.3)
 
-    ax1.scatter(results['t_col'], np.zeros_like(results['t_col']), s=10, c='orange',
-               alpha=0.3, label=f"Collocation (n={len(results['t_col'])})", zorder=2)
-    ax1.plot(0, u0_slider.value, 'mo', markersize=10, label='IC', zorder=5)
+            _line_solution, = _ax_anim.plot([], [], "r-", linewidth=2, label="PINN")
+            _ax_anim.scatter(
+                t_meas,
+                u_meas,
+                s=35,
+                c="green",
+                alpha=0.6,
+                label=f"Measurements (n={len(t_meas)})",
+                edgecolors="darkgreen",
+            )
+            if results["u_ref"] is not None:
+                _ax_anim.plot(results["t_ref"], results["u_ref"], "b--", linewidth=2, alpha=0.8, label="True solution")
+            _ax_anim.scatter(t_col, np.zeros_like(t_col), s=10, c="orange", alpha=0.3, label="Collocation")
+            _ax_anim.plot(0, u0_slider.value, "mo", markersize=8, label="IC")
+            _epoch_text_solution = _ax_anim.text(0.02, 0.95, "", transform=_ax_anim.transAxes, va="top")
+            _ax_anim.legend(loc="best")
 
-    ax1.set_xlabel('Time (s)', fontsize=12)
-    ax1.set_ylabel('Angle θ(t) (rad)', fontsize=12)
-    ax1.set_title(f'Inverse PINN Solution | β̂={results["model"].beta_hat.item():.4f} (true={beta_true_slider.value:.4f})',
-                  fontsize=14, fontweight='bold')
-    ax1.grid(True, alpha=0.3)
-    ax1.legend(loc='best')
-    plt.tight_layout()
-    fig1
+            def _init_solution_anim():
+                _line_solution.set_data([], [])
+                _epoch_text_solution.set_text("")
+                return _line_solution, _epoch_text_solution
+
+            def _animate_solution_frame(i):
+                frame = snapshots[i]
+                _line_solution.set_data(t_test, frame["u_pred"])
+                _epoch_text_solution.set_text(
+                    f"Epoch: {frame['epoch']} | β̂={frame['beta_hat']:.4f} "
+                    f"(true={beta_true_slider.value:.4f})"
+                )
+                return _line_solution, _epoch_text_solution
+
+            _solution_anim_obj = animation.FuncAnimation(
+                _fig_anim,
+                _animate_solution_frame,
+                init_func=_init_solution_anim,
+                frames=len(snapshots),
+                interval=170,
+                blit=True,
+            )
+            _video_html_solution = _solution_anim_obj.to_html5_video()
+            plt.close(_fig_anim)
+            solution_output = mo.Html(_video_html_solution)
+        except Exception as e:
+            solution_output = mo.md(f"_Animation rendering error: {e}_")
+    else:
+        fig1, ax1 = plt.subplots(figsize=(12, 6))
+        ax1.plot(results["t_test"], results["u_pred"], "r-", linewidth=2, label="PINN", zorder=3)
+        ax1.scatter(
+            results["t_meas"],
+            results["u_meas"],
+            s=40,
+            c="green",
+            alpha=0.6,
+            label=f"Measurements (n={len(results['t_meas'])})",
+            zorder=4,
+            edgecolors="darkgreen",
+        )
+
+        if results["u_ref"] is not None:
+            ax1.plot(results["t_ref"], results["u_ref"], "b--", linewidth=2, label="True solution", alpha=0.8)
+            error = np.abs(results["u_pred"] - results["u_ref"])
+            ax1.fill_between(
+                results["t_test"],
+                results["u_pred"] - error,
+                results["u_pred"] + error,
+                alpha=0.2,
+                color="red",
+                label="Error",
+            )
+
+        ax1.scatter(
+            results["t_col"],
+            np.zeros_like(results["t_col"]),
+            s=10,
+            c="orange",
+            alpha=0.3,
+            label=f"Collocation (n={len(results['t_col'])})",
+            zorder=2,
+        )
+        ax1.plot(0, u0_slider.value, "mo", markersize=10, label="IC", zorder=5)
+        ax1.set_xlabel("Time (s)", fontsize=12)
+        ax1.set_ylabel("Angle θ(t) (rad)", fontsize=12)
+        ax1.set_title(
+            f'Inverse PINN Solution | β̂={results["model"].beta_hat.item():.4f} (true={beta_true_slider.value:.4f})',
+            fontsize=14,
+            fontweight="bold",
+        )
+        ax1.grid(True, alpha=0.3)
+        ax1.legend(loc="best")
+        plt.tight_layout()
+        solution_output = fig1
+
+    solution_output
     return
 
 

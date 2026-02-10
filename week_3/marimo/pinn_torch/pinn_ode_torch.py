@@ -25,6 +25,8 @@ def _(mo):
     | Fixed grid resolution | **Adaptive**: query anywhere |
     | Black-box outputs | **Differentiable**: embed in optimization |
     | Ignore sparse data | **Data-efficient**: fuse physics with observations |
+
+    **Navigation:** [Jump to Control Panel](#control-panel)
     """)
     return
 
@@ -185,7 +187,8 @@ def _(
 ):
     @mo.persistent_cache
     def train_model(t_min, t_max, u0, v0, g, l, beta, n_collocation, epochs, lr,
-                    physics_weight, ic_weight, hidden_width, num_layers, print_every, device_type):
+                    physics_weight, ic_weight, hidden_width, num_layers, print_every,
+                    frame_every, make_gif, device_type):
         device = torch.device(device_type)
         model = PINN(hidden_width=hidden_width, num_layers=num_layers).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -207,6 +210,7 @@ def _(
         t_ref, u_ref = reference_solution(t_min, t_max, u0, v0, beta, g, l, 500)
 
         losses = []
+        animation_snapshots = []
 
         # Training loop
         for epoch in range(1, epochs + 1):
@@ -232,6 +236,14 @@ def _(
             if epoch % print_every == 0:
                 print(f"Epoch {epoch}/{epochs} | Loss={total_loss:.3e} | "
                       f"Phys={phys_loss:.3e} | IC={ic_loss:.3e}")
+            if make_gif and epoch % frame_every == 0:
+                with torch.no_grad():
+                    animation_snapshots.append(
+                        {
+                            "epoch": epoch,
+                            "u_pred": model(t_test).cpu().numpy().flatten(),
+                        }
+                    )
 
         # Final predictions
         with torch.no_grad():
@@ -244,7 +256,9 @@ def _(
             'u_pred': u_pred,
             't_col': t_col.detach().cpu().numpy().flatten(),
             't_ref': t_ref,
-            'u_ref': u_ref
+            'u_ref': u_ref,
+            'animation_snapshots': animation_snapshots,
+            'make_gif': make_gif,
         }
     return (train_model,)
 
@@ -252,9 +266,18 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md("""
+    <a id="control-panel"></a>
     ### 2.4 Tune Parameters & Start Training 🛫
 
     Adjust physical, numerical, and training parameters below. Training results are cached.
+
+    **Tuning tips (concise):**
+    - Keep physical parameters fixed unless the exercise explicitly asks you to change them.
+    - Increase collocation points to enforce physics better; this usually improves accuracy but increases runtime.
+    - Increase epochs while losses are still decreasing; stop when improvement plateaus.
+    - Lower learning rate if training is unstable/oscillatory; raise it slightly if convergence is too slow.
+    - Rebalance loss weights when one constraint dominates (PDE residual vs IC mismatch).
+    - Increase network width/depth for harder dynamics; larger models are slower and harder to optimize.
     """)
     return
 
@@ -277,6 +300,8 @@ def _(mo, torch):
                                       value="30k", label="Epochs")
     lr_dropdown = mo.ui.dropdown({"1e-4": 1e-4, "5e-4": 5e-4, "1e-3": 1e-3, "5e-3": 5e-3},
                                   value="1e-3", label="Learning rate")
+    make_gif_checkbox = mo.ui.checkbox(label="Show training animation", value=False)
+    frame_interval = mo.ui.slider(50, 500, value=100, step=50, label="Animation frame interval")
 
     # Loss weights
     physics_weight = mo.ui.slider(0.0, 10.0, value=2.0, step=0.1, label="Physics loss weight")
@@ -289,11 +314,13 @@ def _(mo, torch):
     return (
         beta_slider,
         epochs_dropdown,
+        frame_interval,
         g_slider,
         hidden_width_slider,
         ic_weight,
         l_slider,
         lr_dropdown,
+        make_gif_checkbox,
         n_collocation,
         num_layers_slider,
         physics_weight,
@@ -307,11 +334,13 @@ def _(mo, torch):
 def _(
     beta_slider,
     epochs_dropdown,
+    frame_interval,
     g_slider,
     hidden_width_slider,
     ic_weight,
     l_slider,
     lr_dropdown,
+    make_gif_checkbox,
     mo,
     n_collocation,
     num_layers_slider,
@@ -329,6 +358,8 @@ def _(
         g_slider, l_slider, beta_slider, u0_slider, v0_slider,
         mo.md("#### Domain & Training"),
         t_max_slider, n_collocation, epochs_dropdown, lr_dropdown,
+        mo.md("#### Visualization"),
+        make_gif_checkbox, frame_interval,
         mo.md("#### Network Architecture"),
         hidden_width_slider, num_layers_slider,
         mo.md("#### Loss Weights"),
@@ -348,11 +379,13 @@ def _(
     beta_slider,
     device,
     epochs_dropdown,
+    frame_interval,
     g_slider,
     hidden_width_slider,
     ic_weight,
     l_slider,
     lr_dropdown,
+    make_gif_checkbox,
     mo,
     n_collocation,
     num_layers_slider,
@@ -374,7 +407,10 @@ def _(
         epochs=epochs_dropdown.value, lr=lr_dropdown.value,
         physics_weight=physics_weight.value, ic_weight=ic_weight.value,
         hidden_width=hidden_width_slider.value, num_layers=num_layers_slider.value,
-        print_every=100, device_type=device.type
+        print_every=100,
+        frame_every=frame_interval.value,
+        make_gif=make_gif_checkbox.value,
+        device_type=device.type,
     )
     return (results,)
 
@@ -399,27 +435,97 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(np, plt, results, u0_slider):
-    fig1, ax1 = plt.subplots(figsize=(12, 6))
-    ax1.plot(results['t_test'], results['u_pred'], 'r-', linewidth=2, label='PINN', zorder=3)
+def _(animation, mo, np, plt, results, u0_slider):
+    snapshots = results.get("animation_snapshots", [])
+    if results.get("make_gif") and snapshots and animation is not None:
+        try:
+            _fig_anim, _ax_anim = plt.subplots(figsize=(12, 6))
+            t_test = np.asarray(results["t_test"])
+            t_col = np.asarray(results["t_col"])
 
-    if results['u_ref'] is not None:
-        ax1.plot(results['t_ref'], results['u_ref'], 'b--', linewidth=2, label='Numerical', alpha=0.8)
-        error = np.abs(results['u_pred'] - results['u_ref'])
-        ax1.fill_between(results['t_test'], results['u_pred'] - error, results['u_pred'] + error,
-                        alpha=0.2, color='red', label='Error')
+            curve_arrays = [np.asarray(results["u_pred"])]
+            if results["u_ref"] is not None:
+                curve_arrays.append(np.asarray(results["u_ref"]))
+            curve_arrays.extend(np.asarray(frame["u_pred"]) for frame in snapshots)
+            all_values = np.concatenate(curve_arrays)
+            y_min = float(all_values.min())
+            y_max = float(all_values.max())
+            pad = max(0.1 * (y_max - y_min), 1e-3)
 
-    ax1.scatter(results['t_col'], np.zeros_like(results['t_col']), s=15, c='orange',
-               alpha=0.5, label=f"Collocation (n={len(results['t_col'])})", zorder=2)
-    ax1.plot(0, u0_slider.value, 'go', markersize=10, label='IC', zorder=4)
+            _ax_anim.set_xlim(float(t_test.min()), float(t_test.max()))
+            _ax_anim.set_ylim(y_min - pad, y_max + pad)
+            _ax_anim.set_xlabel("Time (s)", fontsize=12)
+            _ax_anim.set_ylabel("Angle θ(t) (rad)", fontsize=12)
+            _ax_anim.grid(True, alpha=0.3)
 
-    ax1.set_xlabel('Time (s)', fontsize=12)
-    ax1.set_ylabel('Angle θ(t) (rad)', fontsize=12)
-    ax1.set_title('PINN Solution: Damped Pendulum', fontsize=14, fontweight='bold')
-    ax1.grid(True, alpha=0.3)
-    ax1.legend(loc='best')
-    plt.tight_layout()
-    fig1
+            _line_solution, = _ax_anim.plot([], [], "r-", linewidth=2, label="PINN")
+            if results["u_ref"] is not None:
+                _ax_anim.plot(results["t_ref"], results["u_ref"], "b--", linewidth=2, alpha=0.8, label="Numerical")
+            _ax_anim.scatter(t_col, np.zeros_like(t_col), s=10, c="orange", alpha=0.35, label="Collocation")
+            _ax_anim.plot(0, u0_slider.value, "go", markersize=8, label="IC")
+            _epoch_text_solution = _ax_anim.text(0.02, 0.95, "", transform=_ax_anim.transAxes, va="top")
+            _ax_anim.legend(loc="best")
+
+            def _init_solution_anim():
+                _line_solution.set_data([], [])
+                _epoch_text_solution.set_text("")
+                return _line_solution, _epoch_text_solution
+
+            def _animate_solution_frame(i):
+                frame = snapshots[i]
+                _line_solution.set_data(t_test, frame["u_pred"])
+                _epoch_text_solution.set_text(f"Training epoch: {frame['epoch']}")
+                return _line_solution, _epoch_text_solution
+
+            _solution_anim_obj = animation.FuncAnimation(
+                _fig_anim,
+                _animate_solution_frame,
+                init_func=_init_solution_anim,
+                frames=len(snapshots),
+                interval=150,
+                blit=True,
+            )
+            _video_html_solution = _solution_anim_obj.to_html5_video()
+            plt.close(_fig_anim)
+            solution_output = mo.Html(_video_html_solution)
+        except Exception as e:
+            solution_output = mo.md(f"_Animation rendering error: {e}_")
+    else:
+        fig1, ax1 = plt.subplots(figsize=(12, 6))
+        ax1.plot(results["t_test"], results["u_pred"], "r-", linewidth=2, label="PINN", zorder=3)
+
+        if results["u_ref"] is not None:
+            ax1.plot(results["t_ref"], results["u_ref"], "b--", linewidth=2, label="Numerical", alpha=0.8)
+            error = np.abs(results["u_pred"] - results["u_ref"])
+            ax1.fill_between(
+                results["t_test"],
+                results["u_pred"] - error,
+                results["u_pred"] + error,
+                alpha=0.2,
+                color="red",
+                label="Error",
+            )
+
+        ax1.scatter(
+            results["t_col"],
+            np.zeros_like(results["t_col"]),
+            s=15,
+            c="orange",
+            alpha=0.5,
+            label=f"Collocation (n={len(results['t_col'])})",
+            zorder=2,
+        )
+        ax1.plot(0, u0_slider.value, "go", markersize=10, label="IC", zorder=4)
+
+        ax1.set_xlabel("Time (s)", fontsize=12)
+        ax1.set_ylabel("Angle θ(t) (rad)", fontsize=12)
+        ax1.set_title("PINN Solution: Damped Pendulum", fontsize=14, fontweight="bold")
+        ax1.grid(True, alpha=0.3)
+        ax1.legend(loc="best")
+        plt.tight_layout()
+        solution_output = fig1
+
+    solution_output
     return
 
 

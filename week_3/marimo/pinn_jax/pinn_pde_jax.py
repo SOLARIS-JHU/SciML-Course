@@ -77,6 +77,8 @@ def _(mo):
         $$u(x,t) = \sin(\pi x) e^{-\pi^2 \alpha t}$$
 
         This allows us to validate PINN accuracy against ground truth—the spatial profile decays exponentially in time.
+
+        **Navigation:** [Jump to Control Panel](#control-panel)
         """
     )
     return
@@ -499,6 +501,7 @@ def _(mo):
     mo.md(
         r"""
         ---
+        <a id="control-panel"></a>
         ## 3. Interactive Parameters & Training
 
         Adjust the sliders below to configure the PINN training:
@@ -509,6 +512,14 @@ def _(mo):
         - **Network architecture**: Hidden layer width
         - **JAX settings**: PRNG seed for reproducibility
         - **Visualization**: GIF generation options
+
+        **Tuning tips (concise):**
+        - Keep physical parameters fixed unless the exercise explicitly asks you to change them.
+        - Increase collocation points to improve PDE coverage; this usually improves accuracy but increases runtime.
+        - Increase epochs while losses are still decreasing; stop when improvement plateaus.
+        - Lower learning rate if training oscillates/diverges; raise it slightly if convergence is too slow.
+        - Rebalance loss weights if IC/BC errors stay high while PDE loss decreases (or vice versa).
+        - Increase network width/depth for sharper solution features; larger models are slower and harder to train.
         """
     )
     return
