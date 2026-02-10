@@ -1,0 +1,28 @@
+# Minimal SciML-Course dependencies inferred from project imports
+# Generated on 2026-02-10 from the active `sciml` environment.
+
+# Core numerics and plotting
+numpy==2.4.1
+scipy==1.17.0
+matplotlib==3.10.8
+sympy==1.14.0
+pillow==12.1.0
+imageio==2.37.2
+
+# PyTorch track
+torch==2.10.0
+
+# JAX track
+jax==0.9.0
+jaxlib==0.9.0
+optax==0.2.6
+equinox==0.13.4
+
+# marimo apps/notebooks
+marimo==0.19.9
+
+# Week 6 extras (uncomment when needed)
+# cvxpy
+# casadi
+# gymnasium
+# stable-baselines3

@@ -1,0 +1,17 @@
+.claude/
+.agents/
+.codex/
+CLAUDE.md
+AGENTS.md
+.cursorrules
+.windsurf/
+prompts/
+*.prompt
+
+# In __marimo__ and __pycache__, ignore everything except JSON snapshots
+**/__marimo__/**
+**/__pycache__/**
+!**/__marimo__/**/
+!**/__pycache__/**/
+!**/__marimo__/**/*.json
+!**/__pycache__/**/*.json
