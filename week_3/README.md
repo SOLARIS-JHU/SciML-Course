@@ -38,7 +38,7 @@ marimo run week_3/marimo/pinn_torch/pinn_ode_torch.py
 # Option 2: marimo editor mode
 marimo edit week_3/marimo/pinn_torch/pinn_ode_torch.py
 
-# Option3: script fallback
+# Option 3: script fallback
 python week_3/scripts/pinn_torch/PINN_ODE_torch.py
 ```
 
