@@ -1,1 +1,1 @@
-[marimo: pinn_ode_torch](https://molab.marimo.io/notebooks/nb_ecvmCic83rhMAdnnckpKyM)
+[![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/notebooks/nb_msQFS4Lz7i1RkyamB4wonn)
