@@ -3,8 +3,16 @@
 Scientific Machine Learning for Modeling, Optimization, and Control of Dynamical Systems  
 Civil and Systems Engineering Department, Johns Hopkins University
 
-> *"It is the nature of science that answers automatically pose new and more subtle questions."*  
-> *-- Isaac Asimov*
+> <p align="center">
+>   <samp>
+>     The universe is a machine. The machine is composed of gears. The gears are the laws of physics.<br>
+>     If you know the position and velocity of every particle in the universe, <br>
+>     you can predict the future.
+>   </samp>
+> </p>
+> <p align="right">
+>   <samp>— <strong>Ted Chiang</strong>, <em>Exhalation</em></samp>
+> </p>
 
 ## Overview
 
