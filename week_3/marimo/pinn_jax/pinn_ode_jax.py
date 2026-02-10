@@ -7,7 +7,7 @@
 import marimo
 
 __generated_with = "0.19.9"
-app = marimo.App(app_title="PINN ODE (JAX)")
+app = marimo.App(app_title="PINN ODE (JAX)", auto_download=["html"])
 
 
 @app.cell(hide_code=True)
