@@ -1,7 +1,5 @@
 # EN.560.652 Scientific Machine Learning for Modeling, Optimization, and Control of Dynamical Systems  
 
-Civil and Systems Engineering Department, Johns Hopkins University
-
 > <p align="center">
 >   <samp>
 >     Nothing rests; everything moves; everything vibrates.
@@ -10,6 +8,17 @@ Civil and Systems Engineering Department, Johns Hopkins University
 > <p align="right">
 >   <samp>— <strong>Three Initiates</strong>, <em>Kybalion </em></samp>
 > </p>
+
+
+## Instructor
+[Ján Drgoňa](https://drgona.github.io/)  
+Associate Professor  
+Department of Civil and Systems Engineering  
+Ralph S. O’Connor Sustainable Energy Institute (ROSEI)  
+Department of Electrical and Computer Engineering (secondary appointment)  
+Data Science and AI Institute (DSAI) (affiliate member)  
+Johns Hopkins University (JHU)  
+
 
 ## Overview
 
