@@ -1,22 +1,19 @@
-# EN.560.652 SciML Course
+# EN.560.652 Scientific Machine Learning for Modeling, Optimization, and Control of Dynamical Systems  
 
-Scientific Machine Learning for Modeling, Optimization, and Control of Dynamical Systems  
 Civil and Systems Engineering Department, Johns Hopkins University
 
 > <p align="center">
 >   <samp>
->     The universe is a machine. The machine is composed of gears. The gears are the laws of physics.<br>
->     If you know the position and velocity of every particle in the universe, <br>
->     you can predict the future.
+>     Nothing rests; everything moves; everything vibrates.
 >   </samp>
 > </p>
 > <p align="right">
->   <samp>— <strong>Ted Chiang</strong>, <em>Exhalation</em></samp>
+>   <samp>— <strong>Three Initiates</strong>, <em>Kybalion </em></samp>
 > </p>
 
 ## Overview
 
-This repository contains weekly lecture material and code examples for SciML.
+This repository contains weekly lecture material and code examples for the SciML course.
 
 - Week 1: Introduction 
 - Week 2: Differentiable programming 
