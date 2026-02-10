@@ -175,12 +175,12 @@
     },
     {
       "id": "nWHF",
-      "code_hash": "25f67d07a886cb86cfd249d6aea7222d",
+      "code_hash": "3882c6d9b40b6be85ddb698f8de5dde6",
       "outputs": [
         {
           "type": "data",
           "data": {
-            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><span class=\"paragraph\"><a id=\"control-panel\"></a></span>\n<h3 id=\"25-tune-parameters-start-training\">2.5 Tune Parameters &amp; Start Training \ud83c\udf7c</h3>\n<span class=\"paragraph\">Adjust physical, measurement, and training parameters below. Results are cached.</span>\n<span class=\"paragraph\"><strong>Tuning tips (concise):</strong></span>\n<ul>\n<li>Keep physical parameters fixed unless the exercise explicitly asks you to change them.</li>\n<li>Increase collocation points to enforce physics better; this usually improves accuracy but increases runtime.</li>\n<li>Increase epochs while losses are still decreasing; stop when improvement plateaus.</li>\n<li>Lower learning rate if training is unstable/oscillatory; raise it slightly if convergence is too slow.</li>\n<li>Rebalance loss weights when one term dominates (physics, IC, or data loss).</li>\n<li>Increase network width/depth for harder dynamics; larger models are slower and harder to optimize.</li>\n</ul></span>"
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><span class=\"paragraph\"><a id=\"control-panel\"></a></span>\n<h3 id=\"25-tune-parameters-start-training\">2.5 Tune Parameters &amp; Start Training</h3>\n<span class=\"paragraph\">Adjust physical, measurement, and training parameters below. Results are cached.</span>\n<span class=\"paragraph\"><strong>Tuning tips:</strong></span>\n<ul>\n<li>Keep physical parameters fixed unless the exercise explicitly asks you to change them.</li>\n<li>Increase collocation points to enforce physics better; this usually improves accuracy but increases runtime.</li>\n<li>Increase epochs while losses are still decreasing; stop when improvement plateaus.</li>\n<li>Lower learning rate if training is unstable/oscillatory; raise it slightly if convergence is too slow.</li>\n<li>Rebalance loss weights when one term dominates (physics, IC, or data loss).</li>\n<li>Increase network width/depth for harder dynamics; larger models are slower and harder to optimize.</li>\n</ul></span>"
           }
         }
       ],

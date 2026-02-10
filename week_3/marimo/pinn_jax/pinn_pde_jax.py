@@ -19,79 +19,72 @@
 
 import marimo
 
-__generated_with = "0.10.14"
+__generated_with = "0.19.9"
 app = marimo.App(app_title="PINN for 1D Heat Equation (JAX)")
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        # Physics-Informed Neural Networks for PDEs
-        ## Solving the 1D Heat Equation Without Discretization (JAX)
+    mo.md(r"""
+    # Physics-Informed Neural Networks for PDEs
+    ## Solving the 1D Heat Equation Without Discretization (JAX)
 
-        **Physics-Informed Neural Networks (PINNs)** train neural networks to satisfy both governing equations
-        and boundary/initial conditions simultaneously—no spatial or temporal discretization required.
+    **Physics-Informed Neural Networks (PINNs)** train neural networks to satisfy both governing equations
+    and boundary/initial conditions simultaneously—no spatial or temporal discretization required.
 
-        | Traditional PDE Methods | PINNs |
-        |------------------------|-------|
-        | Require spatial mesh | **Meshfree**: continuous solution everywhere |
-        | Fixed grid resolution | **Adaptive**: query at any $(x,t)$ |
-        | Discrete solutions | **Differentiable**: embed in optimization pipelines |
-        | Struggle with sparse data | **Data-efficient**: fuse physics with observations |
+    | Traditional PDE Methods | PINNs |
+    |------------------------|-------|
+    | Require spatial mesh | **Meshfree**: continuous solution everywhere |
+    | Fixed grid resolution | **Adaptive**: query at any $(x,t)$ |
+    | Discrete solutions | **Differentiable**: embed in optimization pipelines |
+    | Struggle with sparse data | **Data-efficient**: fuse physics with observations |
 
-        ---
+    ---
 
-        ## The Physical System
+    ## The Physical System
 
-        The 1D heat equation models thermal diffusion:
+    The 1D heat equation models thermal diffusion:
 
-        $$\frac{\partial u}{\partial t} = \alpha \frac{\partial^2 u}{\partial x^2}$$
+    $$\frac{\partial u}{\partial t} = \alpha \frac{\partial^2 u}{\partial x^2}$$
 
-        **Notation:**
-        - $u(x,t)$ = temperature at position $x$ and time $t$
-        - $\alpha$ = thermal diffusivity (controls diffusion rate, units: m²/s)
+    **Notation:**
+    - $u(x,t)$ = temperature at position $x$ and time $t$
+    - $\alpha$ = thermal diffusivity (controls diffusion rate, units: m²/s)
 
-        **Physical Interpretation:** Heat flows from hot regions to cold regions, with rate proportional to the second spatial derivative (curvature). High curvature means rapid temperature change.
+    **Physical Interpretation:** Heat flows from hot regions to cold regions, with rate proportional to the second spatial derivative (curvature). High curvature means rapid temperature change.
 
-        ---
+    ---
 
-        ## Problem Setup
+    ## Problem Setup
 
-        **Domain:** $x \in [0, 1]$, $t \in [0, T]$
+    **Domain:** $x \in [0, 1]$, $t \in [0, T]$
 
-        **Initial Condition (IC):**
+    **Initial Condition (IC):**
 
-        $$u(x, 0) = \sin(\pi x)$$
+    $$u(x, 0) = \sin(\pi x)$$
 
-        Initial temperature distribution is a half sine wave—hot in the middle, cool at edges.
+    Initial temperature distribution is a half sine wave—hot in the middle, cool at edges.
 
-        **Boundary Conditions (BC):**
+    **Boundary Conditions (BC):**
 
-        $$u(0, t) = 0, \quad u(1, t) = 0$$
+    $$u(0, t) = 0, \quad u(1, t) = 0$$
 
-        Both endpoints are held at zero temperature (Dirichlet boundary conditions).
+    Both endpoints are held at zero temperature (Dirichlet boundary conditions).
 
-        **Analytical Solution:** For this specific problem, the exact solution is known:
+    **Analytical Solution:** For this specific problem, the exact solution is known:
 
-        $$u(x,t) = \sin(\pi x) e^{-\pi^2 \alpha t}$$
+    $$u(x,t) = \sin(\pi x) e^{-\pi^2 \alpha t}$$
 
-        This allows us to validate PINN accuracy against ground truth—the spatial profile decays exponentially in time.
+    This allows us to validate PINN accuracy against ground truth—the spatial profile decays exponentially in time.
 
-        **Navigation:** [Jump to Control Panel](#control-panel)
-        """
-    )
+    **Navigation:** [Jump to Control Panel](#control-panel)
+    """)
     return
-
-
-@app.cell
-def _():
-    import marimo as mo
-    return (mo,)
 
 
 @app.cell(hide_code=True)
 def _():
+    import marimo as mo
     import jax
     import jax.numpy as jnp
     import equinox as eqx
@@ -103,66 +96,53 @@ def _():
     from io import BytesIO
     from PIL import Image
     import imageio
-    return (
-        Axes3D,
-        BytesIO,
-        Image,
-        cm,
-        eqx,
-        imageio,
-        jax,
-        jnp,
-        np,
-        optax,
-        plt,
-    )
+
+    return cm, eqx, jax, jnp, mo, np, optax, plt
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ---
-        ## 1. The PINN Formulation
+    mo.md(r"""
+    ---
+    ## 1. The PINN Formulation
 
-        ### Core Idea
+    ### Core Idea
 
-        Approximate $u(x,t)$ with neural network $u_\phi(x,t)$ by minimizing:
+    Approximate $u(x,t)$ with neural network $u_\phi(x,t)$ by minimizing:
 
-        $$\mathcal{L}_{\text{total}} = w_{\text{PDE}} \mathcal{L}_{\text{PDE}} + w_{\text{IC}} \mathcal{L}_{\text{IC}} + w_{\text{BC}} \mathcal{L}_{\text{BC}}$$
+    $$\mathcal{L}_{\text{total}} = w_{\text{PDE}} \mathcal{L}_{\text{PDE}} + w_{\text{IC}} \mathcal{L}_{\text{IC}} + w_{\text{BC}} \mathcal{L}_{\text{BC}}$$
 
-        where derivatives are computed via **automatic differentiation**.
+    where derivatives are computed via **automatic differentiation**.
 
-        ### 1.1 Physics Residual
+    ### 1.1 Physics Residual
 
-        The governing equation enforces energy conservation at **collocation points** $\{(x_i, t_i)\}$:
+    The governing equation enforces energy conservation at **collocation points** $\{(x_i, t_i)\}$:
 
-        $$\mathcal{R}_{\text{PDE}}(x, t) = \frac{\partial u}{\partial t} - \alpha \frac{\partial^2 u}{\partial x^2} = 0$$
+    $$\mathcal{R}_{\text{PDE}}(x, t) = \frac{\partial u}{\partial t} - \alpha \frac{\partial^2 u}{\partial x^2} = 0$$
 
-        **Physics Loss:**
+    **Physics Loss:**
 
-        $$\mathcal{L}_{\text{PDE}} = \frac{1}{N_c}\sum_{i=1}^{N_c} \left[\frac{\partial u}{\partial t}(x_i, t_i) - \alpha \frac{\partial^2 u}{\partial x^2}(x_i, t_i)\right]^2$$
+    $$\mathcal{L}_{\text{PDE}} = \frac{1}{N_c}\sum_{i=1}^{N_c} \left[\frac{\partial u}{\partial t}(x_i, t_i) - \alpha \frac{\partial^2 u}{\partial x^2}(x_i, t_i)\right]^2$$
 
-        ### 1.2 Initial Condition
+    ### 1.2 Initial Condition
 
-        Temperature distribution at $t=0$:
+    Temperature distribution at $t=0$:
 
-        $$\mathcal{L}_{\text{IC}} = \frac{1}{N_{\text{IC}}}\sum_{i=1}^{N_{\text{IC}}} |u(x_i, 0) - \sin(\pi x_i)|^2$$
+    $$\mathcal{L}_{\text{IC}} = \frac{1}{N_{\text{IC}}}\sum_{i=1}^{N_{\text{IC}}} |u(x_i, 0) - \sin(\pi x_i)|^2$$
 
-        ### 1.3 Boundary Conditions
+    ### 1.3 Boundary Conditions
 
-        Fixed temperature at boundaries (Dirichlet BCs):
+    Fixed temperature at boundaries (Dirichlet BCs):
 
-        $$\mathcal{L}_{\text{BC}} = \frac{1}{N_{\text{BC}}}\sum_{i=1}^{N_{\text{BC}}} \left[|u(0, t_i)|^2 + |u(1, t_i)|^2\right]$$
+    $$\mathcal{L}_{\text{BC}} = \frac{1}{N_{\text{BC}}}\sum_{i=1}^{N_{\text{BC}}} \left[|u(0, t_i)|^2 + |u(1, t_i)|^2\right]$$
 
-        ### Why Multiple Loss Terms?
+    ### Why Multiple Loss Terms?
 
-        - **PDE loss**: Ensures physics is satisfied throughout the domain
-        - **IC loss**: Matches initial temperature profile
-        - **BC loss**: Enforces boundary temperature constraints
-        - **Weights** $w_{\text{PDE}}, w_{\text{IC}}, w_{\text{BC}}$: Balance competing objectives
-        """
-    )
+    - **PDE loss**: Ensures physics is satisfied throughout the domain
+    - **IC loss**: Matches initial temperature profile
+    - **BC loss**: Enforces boundary temperature constraints
+    - **Weights** $w_{\text{PDE}}, w_{\text{IC}}, w_{\text{BC}}$: Balance competing objectives
+    """)
     return
 
 
@@ -175,10 +155,8 @@ def _(np):
     def u_analytical(x, t, alpha):
         """Analytical solution: u(x,t) = sin(pi*x) * exp(-pi^2 * alpha * t)"""
         return np.sin(np.pi * x) * np.exp(-np.pi**2 * alpha * t)
-    return u_analytical, u_initial
 
-
-
+    return
 
 
 @app.cell(hide_code=True)
@@ -224,7 +202,8 @@ def _(eqx, jax):
             for layer in self.layers[:-1]:
                 h = jax.nn.tanh(layer(h))
             return self.layers[-1](h)
-    return (PINN,)
+
+    return
 
 
 @app.cell(hide_code=True)
@@ -273,7 +252,16 @@ def _(jax, jnp):
         return jax.vmap(lambda x, t: pde_residual_single(model, x[0], t[0], alpha))(
             x_batch, t_batch
         )
-    return pde_residual_batch, pde_residual_single
+
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 2.3 Training Loop
+    """)
+    return
 
 
 @app.cell
@@ -493,35 +481,32 @@ def _(eqx, jax, jnp, mo, np, optax):
             'gif_frames': gif_frames,
             'make_gif': make_gif,
         }
+
     return (train_model,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ---
-        <a id="control-panel"></a>
-        ## 3. Interactive Parameters & Training
+    mo.md(r"""
+    ---
+    <a id="control-panel"></a>
+    ## 3. Interactive Parameters & Training
 
-        Adjust the sliders below to configure the PINN training:
+    - **Physical parameters**: Thermal diffusivity, domain size
+    - **Training parameters**: Collocation points, epochs, learning rate
+    - **Loss weights**: Balance between PDE, IC, and BC enforcement
+    - **Network architecture**: Hidden layer width
+    - **JAX settings**: PRNG seed for reproducibility
+    - **Visualization**: GIF generation options
 
-        - **Physical parameters**: Thermal diffusivity, domain size
-        - **Training parameters**: Collocation points, epochs, learning rate
-        - **Loss weights**: Balance between PDE, IC, and BC enforcement
-        - **Network architecture**: Hidden layer width
-        - **JAX settings**: PRNG seed for reproducibility
-        - **Visualization**: GIF generation options
-
-        **Tuning tips (concise):**
-        - Keep physical parameters fixed unless the exercise explicitly asks you to change them.
-        - Increase collocation points to improve PDE coverage; this usually improves accuracy but increases runtime.
-        - Increase epochs while losses are still decreasing; stop when improvement plateaus.
-        - Lower learning rate if training oscillates/diverges; raise it slightly if convergence is too slow.
-        - Rebalance loss weights if IC/BC errors stay high while PDE loss decreases (or vice versa).
-        - Increase network width/depth for sharper solution features; larger models are slower and harder to train.
-        """
-    )
+    **Tuning tips:**
+    - Keep physical parameters fixed unless the exercise explicitly asks you to change them.
+    - Increase collocation points to improve PDE coverage; this usually improves accuracy but increases runtime.
+    - Increase epochs while losses are still decreasing; stop when improvement plateaus.
+    - Lower learning rate if training oscillates/diverges; raise it slightly if convergence is too slow.
+    - Rebalance loss weights if IC/BC errors stay high while PDE loss decreases (or vice versa).
+    - Increase network width/depth for sharper solution features; larger models are slower and harder to train.
+    """)
     return
 
 
@@ -591,48 +576,7 @@ def _(mo):
     print_every_slider = mo.ui.slider(
         500, 5000, value=2000, step=500, label="Print interval (epochs)"
     )
-    return (
-        alpha_slider,
-        bc_weight_slider,
-        epochs_dropdown,
-        frame_interval_slider,
-        hidden_width_slider,
-        ic_weight_slider,
-        lr_dropdown,
-        make_gif_checkbox,
-        n_bc_slider,
-        n_collocation_slider,
-        n_ic_slider,
-        num_layers_slider,
-        pde_weight_slider,
-        print_every_slider,
-        seed_slider,
-        t_max_slider,
-        x_max_slider,
-    )
 
-
-@app.cell(hide_code=True)
-def _(
-    alpha_slider,
-    bc_weight_slider,
-    epochs_dropdown,
-    frame_interval_slider,
-    hidden_width_slider,
-    ic_weight_slider,
-    lr_dropdown,
-    make_gif_checkbox,
-    mo,
-    n_bc_slider,
-    n_collocation_slider,
-    n_ic_slider,
-    num_layers_slider,
-    pde_weight_slider,
-    print_every_slider,
-    seed_slider,
-    t_max_slider,
-    x_max_slider,
-):
     control_panel = mo.vstack([
         mo.md("#### Physical Parameters"),
         alpha_slider,
@@ -663,10 +607,29 @@ def _(
     train_button = mo.ui.run_button(label="▶ Train PINN")
 
     mo.vstack([train_button, control_panel])
-    return control_panel, train_button
+    return (
+        alpha_slider,
+        bc_weight_slider,
+        epochs_dropdown,
+        frame_interval_slider,
+        hidden_width_slider,
+        ic_weight_slider,
+        lr_dropdown,
+        make_gif_checkbox,
+        n_bc_slider,
+        n_collocation_slider,
+        n_ic_slider,
+        num_layers_slider,
+        pde_weight_slider,
+        print_every_slider,
+        seed_slider,
+        t_max_slider,
+        train_button,
+        x_max_slider,
+    )
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     alpha_slider,
     bc_weight_slider,
@@ -728,12 +691,14 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""### 4.1 3D Surface Plot: PINN Solution""")
+    mo.md(r"""
+    ### 4.1 3D Surface Plot: PINN Solution
+    """)
     return
 
 
 @app.cell(hide_code=True)
-def _(Axes3D, cm, plt, results):
+def _(cm, plt, results):
     fig_3d = plt.figure(figsize=(12, 8))
     ax_3d = fig_3d.add_subplot(111, projection='3d')
     surf = ax_3d.plot_surface(
@@ -753,17 +718,19 @@ def _(Axes3D, cm, plt, results):
     fig_3d.colorbar(surf, ax=ax_3d, shrink=0.5, aspect=10)
     plt.tight_layout()
     fig_3d
-    return ax_3d, fig_3d, surf
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""### 4.2 Comparison with Analytical Solution""")
     return
 
 
 @app.cell(hide_code=True)
-def _(Axes3D, cm, np, plt, results):
+def _(mo):
+    mo.md(r"""
+    ### 4.2 Comparison with Analytical Solution
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(cm, np, plt, results):
     fig_compare = plt.figure(figsize=(18, 5))
 
     # PINN Solution
@@ -814,12 +781,14 @@ def _(Axes3D, cm, np, plt, results):
 
     plt.tight_layout()
     fig_compare
-    return ax1, ax2, ax3, error, fig_compare, surf1, surf2, surf3
+    return (error,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""### 4.3 2D Heatmap Visualization""")
+    mo.md(r"""
+    ### 4.3 2D Heatmap Visualization
+    """)
     return
 
 
@@ -868,12 +837,14 @@ def _(error, plt, results):
 
     plt.tight_layout()
     fig_heatmap
-    return axes, fig_heatmap, im1, im2, im3
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""### 4.4 Temporal Slices: u(x) at Different Times""")
+    mo.md(r"""
+    ### 4.4 Temporal Slices: u(x) at Different Times
+    """)
     return
 
 
@@ -914,12 +885,14 @@ def _(np, plt, results):
     ax_time.grid(True, alpha=0.3)
     plt.tight_layout()
     fig_time_slices
-    return ax_time, fig_time_slices, t_idx, t_max_val, t_slices, t_val
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""### 4.5 Spatial Slices: u(t) at Different Positions""")
+    mo.md(r"""
+    ### 4.5 Spatial Slices: u(t) at Different Positions
+    """)
     return
 
 
@@ -959,12 +932,14 @@ def _(np, plt, results):
     ax_space.grid(True, alpha=0.3)
     plt.tight_layout()
     fig_space_slices
-    return ax_space, fig_space_slices, x_idx, x_max_val, x_slices, x_val
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""### 4.6 Physics Residual Validation""")
+    mo.md(r"""
+    ### 4.6 Physics Residual Validation
+    """)
     return
 
 
@@ -1010,15 +985,7 @@ def _(np, plt, results):
     """
 
     fig_residual
-    return (
-        axes_res,
-        fig_residual,
-        residual_stats,
-        residuals_flat,
-        sc,
-        t_col,
-        x_col,
-    )
+    return residual_stats, residuals_flat
 
 
 @app.cell(hide_code=True)
@@ -1029,7 +996,9 @@ def _(mo, residual_stats):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""### 4.7 Training Dynamics""")
+    mo.md(r"""
+    ### 4.7 Training Dynamics
+    """)
     return
 
 
@@ -1075,12 +1044,14 @@ def _(np, plt, results):
 
     plt.tight_layout()
     fig_training
-    return axes_train, epochs_array, fig_training
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""### 4.8 Error Metrics Summary""")
+    mo.md(r"""
+    ### 4.8 Error Metrics Summary
+    """)
     return
 
 
@@ -1097,82 +1068,78 @@ def _(error, np, residuals_flat):
         ["Maximum Error", f"{max_error:.6e}"],
         ["PDE Residual L2 Norm", f"{residual_l2:.6e}"],
     ]
-    return error_data, mae, max_error, residual_l2, rmse
+    return (error_data,)
 
 
 @app.cell(hide_code=True)
 def _(error_data, mo):
-    mo.md(
-        f"""
-        | Metric | Value |
-        |--------|-------|
-        {chr(10).join(f"| {row[0]} | {row[1]} |" for row in error_data)}
-        """
-    )
+    mo.md(f"""
+    | Metric | Value |
+    |--------|-------|
+    {chr(10).join(f"| {row[0]} | {row[1]} |" for row in error_data)}
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## Summary
+    mo.md(r"""
+    ## Summary
 
-        ### Key Features of this JAX PINN Implementation
+    ### Key Features of this JAX PINN Implementation
 
-        ✅ **JAX Functional Programming**
-        - Explicit PRNG key management for reproducibility
-        - `jax.vmap` for efficient batched operations
-        - `jax.grad` for automatic differentiation
-        - `@eqx.filter_jit` for JIT-compiled training
+    ✅ **JAX Functional Programming**
+    - Explicit PRNG key management for reproducibility
+    - `jax.vmap` for efficient batched operations
+    - `jax.grad` for automatic differentiation
+    - `@eqx.filter_jit` for JIT-compiled training
 
-        ✅ **Equinox Neural Networks**
-        - Pytree-based module system
-        - Clean functional design
-        - Compatible with JAX transformations
+    ✅ **Equinox Neural Networks**
+    - Pytree-based module system
+    - Clean functional design
+    - Compatible with JAX transformations
 
-        ✅ **Multi-term Loss Function**
-        - PDE residual enforces heat equation at collocation points
-        - Initial condition loss ensures correct starting temperature
-        - Boundary condition losses maintain fixed boundary temperatures
+    ✅ **Multi-term Loss Function**
+    - PDE residual enforces heat equation at collocation points
+    - Initial condition loss ensures correct starting temperature
+    - Boundary condition losses maintain fixed boundary temperatures
 
-        ✅ **Validation Against Analytical Solution**
-        - Exact solution: $u(x,t) = \sin(\pi x) e^{-\pi^2 \alpha t}$
-        - Provides ground truth for error analysis
+    ✅ **Validation Against Analytical Solution**
+    - Exact solution: $u(x,t) = \sin(\pi x) e^{-\pi^2 \alpha t}$
+    - Provides ground truth for error analysis
 
-        ### JAX vs PyTorch Comparison
+    ### JAX vs PyTorch Comparison
 
-        | Aspect | JAX | PyTorch |
-        |--------|-----|---------|
-        | **Programming style** | Functional (pure functions) | Object-oriented (classes) |
-        | **Randomness** | Explicit PRNG keys | Global random state |
-        | **Derivatives** | `jax.grad` + nested calls | `torch.autograd.grad` with `create_graph=True` |
-        | **Batching** | `jax.vmap` (explicit) | Broadcasting (implicit) |
-        | **Device** | Automatic placement | Manual `.to(device)` |
-        | **JIT** | `@jax.jit` decorator | `torch.jit.script` |
+    | Aspect | JAX | PyTorch |
+    |--------|-----|---------|
+    | **Programming style** | Functional (pure functions) | Object-oriented (classes) |
+    | **Randomness** | Explicit PRNG keys | Global random state |
+    | **Derivatives** | `jax.grad` + nested calls | `torch.autograd.grad` with `create_graph=True` |
+    | **Batching** | `jax.vmap` (explicit) | Broadcasting (implicit) |
+    | **Device** | Automatic placement | Manual `.to(device)` |
+    | **JIT** | `@jax.jit` decorator | `torch.jit.script` |
 
-        ### Strengths
+    ### Strengths
 
-        - **No mesh required**: Unlike finite difference/element methods
-        - **Smooth solutions**: Neural network provides continuous interpolation
-        - **Physics-informed**: Satisfies governing equations during training
-        - **JAX performance**: Fast execution via JIT compilation
+    - **No mesh required**: Unlike finite difference/element methods
+    - **Smooth solutions**: Neural network provides continuous interpolation
+    - **Physics-informed**: Satisfies governing equations during training
+    - **JAX performance**: Fast execution via JIT compilation
 
-        ### Limitations
+    ### Limitations
 
-        - **Computational cost**: Training can be slow for complex PDEs
-        - **Hyperparameter sensitivity**: Loss weights affect convergence
-        - **Local minima**: May require multiple training runs
-        - **Memory usage**: JAX traces functions for JIT
+    - **Computational cost**: Training can be slow for complex PDEs
+    - **Hyperparameter sensitivity**: Loss weights affect convergence
+    - **Local minima**: May require multiple training runs
+    - **Memory usage**: JAX traces functions for JIT
 
-        ### Extensions
+    ### Extensions
 
-        - 2D/3D heat equations
-        - Time-dependent boundary conditions
-        - Nonlinear PDEs (reaction-diffusion, Burgers' equation)
-        - Inverse problems (learning unknown parameters like α)
-        """
-    )
+    - 2D/3D heat equations
+    - Time-dependent boundary conditions
+    - Nonlinear PDEs (reaction-diffusion, Burgers' equation)
+    - Inverse problems (learning unknown parameters like α)
+    """)
     return
 
 

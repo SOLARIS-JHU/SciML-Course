@@ -38,6 +38,8 @@ def _(mo):
     | Discrete solutions | **Differentiable**: embed in optimization pipelines |
     | Struggle with sparse data | **Data-efficient**: fuse physics with observations |
 
+    **Navigation:** [Jump to Control Panel](#control-panel)
+
     ---
 
     ## The Physical System
@@ -75,8 +77,6 @@ def _(mo):
     $$u(x,t) = \sin(\pi x) e^{-\pi^2 \alpha t}$$
 
     This allows us to validate PINN accuracy against ground truth—the spatial profile decays exponentially in time.
-
-    **Navigation:** [Jump to Control Panel](#control-panel)
     """)
     return
 
@@ -414,15 +414,13 @@ def _(mo):
     <a id="control-panel"></a>
     ## 3. Interactive Parameters & Training
 
-    Adjust the sliders below to configure the PINN training:
-
     - **Physical parameters**: Thermal diffusivity, domain size
     - **Training parameters**: Collocation points, epochs, learning rate
     - **Loss weights**: Balance between PDE, IC, and BC enforcement
     - **Network architecture**: Hidden layer width
     - **Visualization**: GIF generation options
 
-    **Tuning tips (concise):**
+    **Tuning tips:**
     - Keep physical parameters fixed unless the exercise explicitly asks you to change them.
     - Increase collocation points to improve PDE coverage; this usually improves accuracy but increases runtime.
     - Increase epochs while losses are still decreasing; stop when improvement plateaus.

@@ -337,11 +337,11 @@ def _(
 def _(mo):
     mo.md("""
     <a id="control-panel"></a>
-    ### 2.5 Tune Parameters & Start Training 🍼
+    ### 2.5 Tune Parameters & Start Training
 
     Adjust physical, measurement, and training parameters below. Results are cached.
 
-    **Tuning tips (concise):**
+    **Tuning tips:**
     - Keep physical parameters fixed unless the exercise explicitly asks you to change them.
     - Increase collocation points to enforce physics better; this usually improves accuracy but increases runtime.
     - Increase epochs while losses are still decreasing; stop when improvement plateaus.

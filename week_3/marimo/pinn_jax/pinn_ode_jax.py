@@ -6,7 +6,7 @@
 
 import marimo
 
-__generated_with = "0.19.7"
+__generated_with = "0.19.9"
 app = marimo.App(app_title="PINN ODE (JAX)")
 
 
@@ -93,6 +93,7 @@ def _(mo, np, solve_ivp):
         t_ref = np.linspace(t_min, t_max, n_eval)
         u_ref = sol.sol(t_ref)[0]
         return t_ref, u_ref
+
     return (reference_solution,)
 
 
@@ -115,7 +116,7 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md("""
+    mo.md(r"""
     ### 2.1 Neural Network Architecture
 
     A shallow **Equinox** network (2 hidden layers × 32 neurons, tanh activations) maps time $t$ to angle $\theta(t)$.
@@ -140,6 +141,7 @@ def _(eqx, jax):
             for layer in self.layers[:-1]:
                 h = jax.nn.tanh(layer(h))
             return self.layers[-1](h)
+
     return (PINN,)
 
 
@@ -177,7 +179,8 @@ def _(jax, jnp):
     def physics_residual_batch(model, t_batch, g, l, beta):
         """Vectorized physics residual for batch of time points."""
         return jax.vmap(lambda t: physics_residual(model, t[0], g, l, beta))(t_batch)
-    return (physics_residual, physics_residual_batch)
+
+    return physics_residual, physics_residual_batch
 
 
 @app.cell(hide_code=True)
@@ -194,7 +197,6 @@ def _(mo):
 @app.cell
 def _(
     PINN,
-    animation,
     eqx,
     jax,
     jnp,
@@ -300,6 +302,7 @@ def _(
             'animation_snapshots': animation_snapshots,
             'make_gif': make_gif
         }
+
     return (train_model,)
 
 
@@ -311,7 +314,7 @@ def _(mo):
 
     Adjust physical, numerical, and training parameters below. Training results are cached.
 
-    **Tuning tips (concise):**
+    **Tuning tips:**
     - Keep physical parameters fixed unless the exercise explicitly asks you to change them.
     - Increase collocation points to enforce physics better; this usually improves accuracy but increases runtime.
     - Increase epochs while losses are still decreasing; stop when improvement plateaus.
@@ -322,7 +325,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo, np):
     # Physical parameters
     g_slider = mo.ui.slider(5.0, 15.0, value=9.81, step=0.1, label="Gravity g (m/s²)")
@@ -355,46 +358,6 @@ def _(mo, np):
 
     # JAX-specific: random seed
     seed_slider = mo.ui.slider(0, 9999, value=42, step=1, label="Random seed")
-    return (
-        beta_slider,
-        epochs_dropdown,
-        frame_interval,
-        g_slider,
-        hidden_width_slider,
-        ic_weight,
-        l_slider,
-        lr_dropdown,
-        make_gif_checkbox,
-        n_collocation,
-        num_layers_slider,
-        physics_weight,
-        seed_slider,
-        t_max_slider,
-        u0_slider,
-        v0_slider,
-    )
-
-
-@app.cell
-def _(
-    beta_slider,
-    epochs_dropdown,
-    frame_interval,
-    g_slider,
-    hidden_width_slider,
-    ic_weight,
-    l_slider,
-    lr_dropdown,
-    make_gif_checkbox,
-    mo,
-    n_collocation,
-    num_layers_slider,
-    physics_weight,
-    seed_slider,
-    t_max_slider,
-    u0_slider,
-    v0_slider,
-):
 
     control_panel = mo.vstack([
         mo.md("#### Physical Parameters"),
@@ -414,10 +377,28 @@ def _(
     train_button = mo.ui.run_button(label="▶ Train PINN")
 
     mo.vstack([train_button, control_panel])
-    return control_panel, train_button
+    return (
+        beta_slider,
+        epochs_dropdown,
+        frame_interval,
+        g_slider,
+        hidden_width_slider,
+        ic_weight,
+        l_slider,
+        lr_dropdown,
+        make_gif_checkbox,
+        n_collocation,
+        num_layers_slider,
+        physics_weight,
+        seed_slider,
+        t_max_slider,
+        train_button,
+        u0_slider,
+        v0_slider,
+    )
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     beta_slider,
     epochs_dropdown,
@@ -439,7 +420,6 @@ def _(
     u0_slider,
     v0_slider,
 ):
-
     mo.stop(not train_button.value, mo.md("_Click **▶ Train PINN** to begin_"))
 
     results = train_model(
@@ -592,7 +572,6 @@ def _(
     results,
     t_max_slider,
 ):
-
     t_fine = jnp.linspace(0.0, t_max_slider.value, 1000).reshape(-1, 1)
     residual = jax.vmap(lambda t: physics_residual(results['model'], t[0], g_slider.value,
                                                      l_slider.value, beta_slider.value))(t_fine)
@@ -609,7 +588,7 @@ def _(
     ax2.set_yscale('symlog', linthresh=1e-6)
     plt.tight_layout()
     fig2
-    return ax2, fig2, residual, residual_np, t_fine
+    return
 
 
 @app.cell(hide_code=True)
@@ -650,7 +629,7 @@ def _(plt, results):
 
     plt.tight_layout()
     fig3
-    return ax_lin, ax_log, fig3, losses, start_idx
+    return
 
 
 @app.cell(hide_code=True)
@@ -696,7 +675,7 @@ def _(
         metrics_table = mo.md("_Reference solution unavailable_")
 
     metrics_table
-    return mae, max_error, metrics_table, res_metrics, residual_l2, rmse, t_metrics
+    return
 
 
 @app.cell(hide_code=True)
@@ -740,7 +719,7 @@ def _(jax, jnp, np, plt, results, t_max_slider, u0_slider, v0_slider):
     ax4.axvline(0, color='k', linestyle='-', alpha=0.2)
     plt.tight_layout()
     fig4
-    return ax4, fig4, t_phase, u_and_dudt, u_dot_ref, u_dot_vals, u_phase_vals
+    return
 
 
 @app.cell(hide_code=True)
@@ -756,7 +735,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(animation, l_slider, mo, np, plt, results):
     if animation is not None:
         try:
@@ -832,31 +811,7 @@ def _(animation, l_slider, mo, np, plt, results):
         animation_display = mo.md("_Install matplotlib with: `pip install matplotlib`_")
 
     animation_display
-    return (
-        angle_num,
-        angle_pinn,
-        anim,
-        animate,
-        animation_display,
-        ax_anim,
-        fig_anim,
-        has_numerical,
-        init,
-        line_num,
-        line_pinn,
-        start,
-        trace_num,
-        trace_pinn,
-        trace_x_num,
-        trace_x_pinn,
-        trace_y_num,
-        trace_y_pinn,
-        video_html,
-        x_num,
-        x_pinn,
-        y_num,
-        y_pinn,
-    )
+    return
 
 
 @app.cell(hide_code=True)

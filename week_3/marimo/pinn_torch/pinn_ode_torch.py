@@ -6,8 +6,8 @@
 
 import marimo
 
-__generated_with = "0.19.7"
-app = marimo.App(app_title="PINN ODE (Torch)")
+__generated_with = "0.19.9"
+app = marimo.App(app_title="PINN ODE (Torch)", auto_download=["ipynb", "html"])
 
 
 @app.cell(hide_code=True)
@@ -89,6 +89,7 @@ def _(mo, np, solve_ivp):
         t_ref = np.linspace(t_min, t_max, n_eval)
         u_ref = sol.sol(t_ref)[0]
         return t_ref, u_ref
+
     return (reference_solution,)
 
 
@@ -132,6 +133,7 @@ def _(nn):
 
         def forward(self, t):
             return self.net(t)
+
     return (PINN,)
 
 
@@ -161,6 +163,7 @@ def _(torch):
         u_tt = torch.autograd.grad(u_t, t, grad_outputs=torch.ones_like(u_t),
                                     create_graph=True, retain_graph=True)[0]
         return u_tt + beta * u_t + (g / l) * torch.sin(u)
+
     return (physics_residual,)
 
 
@@ -176,15 +179,7 @@ def _(mo):
 
 
 @app.cell
-def _(
-    PINN,
-    mo,
-    nn,
-    np,
-    physics_residual,
-    reference_solution,
-    torch,
-):
+def _(PINN, mo, nn, np, physics_residual, reference_solution, torch):
     @mo.persistent_cache
     def train_model(t_min, t_max, u0, v0, g, l, beta, n_collocation, epochs, lr,
                     physics_weight, ic_weight, hidden_width, num_layers, print_every,
@@ -260,6 +255,7 @@ def _(
             'animation_snapshots': animation_snapshots,
             'make_gif': make_gif,
         }
+
     return (train_model,)
 
 
@@ -267,11 +263,11 @@ def _(
 def _(mo):
     mo.md("""
     <a id="control-panel"></a>
-    ### 2.4 Tune Parameters & Start Training 🛫
+    ### 2.4 Tune Parameters & Start Training
 
     Adjust physical, numerical, and training parameters below. Training results are cached.
 
-    **Tuning tips (concise):**
+    **Tuning tips:**
     - Keep physical parameters fixed unless the exercise explicitly asks you to change them.
     - Increase collocation points to enforce physics better; this usually improves accuracy but increases runtime.
     - Increase epochs while losses are still decreasing; stop when improvement plateaus.
@@ -282,7 +278,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo, torch):
     # Physical parameters
     g_slider = mo.ui.slider(5.0, 15.0, value=9.81, step=0.1, label="Gravity g (m/s²)")
@@ -311,46 +307,6 @@ def _(mo, torch):
     hidden_width_slider = mo.ui.slider(16, 128, value=32, step=8, label="Hidden layer width")
     num_layers_slider = mo.ui.slider(1, 5, value=2, step=1, label="Number of hidden layers")
 
-    return (
-        beta_slider,
-        epochs_dropdown,
-        frame_interval,
-        g_slider,
-        hidden_width_slider,
-        ic_weight,
-        l_slider,
-        lr_dropdown,
-        make_gif_checkbox,
-        n_collocation,
-        num_layers_slider,
-        physics_weight,
-        t_max_slider,
-        u0_slider,
-        v0_slider,
-    )
-
-
-@app.cell
-def _(
-    beta_slider,
-    epochs_dropdown,
-    frame_interval,
-    g_slider,
-    hidden_width_slider,
-    ic_weight,
-    l_slider,
-    lr_dropdown,
-    make_gif_checkbox,
-    mo,
-    n_collocation,
-    num_layers_slider,
-    physics_weight,
-    t_max_slider,
-    torch,
-    u0_slider,
-    v0_slider,
-):
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     control_panel = mo.vstack([
@@ -371,10 +327,28 @@ def _(
     train_button = mo.ui.run_button(label="▶ Train PINN")
 
     mo.vstack([train_button, control_panel])
-    return device, train_button
+    return (
+        beta_slider,
+        device,
+        epochs_dropdown,
+        frame_interval,
+        g_slider,
+        hidden_width_slider,
+        ic_weight,
+        l_slider,
+        lr_dropdown,
+        make_gif_checkbox,
+        n_collocation,
+        num_layers_slider,
+        physics_weight,
+        t_max_slider,
+        train_button,
+        u0_slider,
+        v0_slider,
+    )
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     beta_slider,
     device,
@@ -396,7 +370,6 @@ def _(
     u0_slider,
     v0_slider,
 ):
-
     mo.stop(not train_button.value, mo.md("_Click **▶ Train PINN** to begin_"))
 
     results = train_model(
